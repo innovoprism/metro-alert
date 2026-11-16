@@ -991,15 +991,34 @@
       if (S.follow) centerOnMe(true);
     }, () => {}, { enableHighAccuracy: true, maximumAge: 5000 });
   }
-  function locateOnce(fly) {
+  function gotFirstFix(lat, lng, acc, fly) {
+    S.me = { lat, lng };
+    drawMe(lat, lng, acc);
+    if (fly) { map.setView([lat, lng], 15); setFollow(true); }
+    if (S.T && activeTab === 'metro') renderStations();
+  }
+  let oneShotBusy = false;
+  async function locateOnce(fly) {
+    if (isNative && BgGeo) {
+      // Phone apps: use the app's own location service (avoids the web view's extra "localhost" prompt)
+      if (oneShotBusy) return; oneShotBusy = true;
+      let id = null, done = false;
+      const finish = () => { done = true; oneShotBusy = false; if (id != null) BgGeo.removeWatcher({ id }).catch(() => {}); };
+      setTimeout(() => { if (!done) { finish(); if (fly) toast('Could not get your location'); } }, 20000);
+      try {
+        id = await BgGeo.addWatcher({ requestPermissions: true, stale: true }, (loc, err) => {
+          if (done) return;
+          if (err) { finish(); if (fly) toast(err.code === 'NOT_AUTHORIZED' ? 'Location permission denied' : 'Could not get your location'); return; }
+          finish(); gotFirstFix(loc.latitude, loc.longitude, loc.accuracy, fly);
+        });
+        if (done) BgGeo.removeWatcher({ id }).catch(() => {});
+      } catch { finish(); }
+      return;
+    }
     if (!('geolocation' in navigator)) return;
-    navigator.geolocation.getCurrentPosition(p => {
-      S.me = { lat: p.coords.latitude, lng: p.coords.longitude };
-      drawMe(S.me.lat, S.me.lng, p.coords.accuracy);
-      if (fly) { map.setView([S.me.lat, S.me.lng], 15); setFollow(true); }
-      if (S.T && activeTab === 'metro') renderStations();
-    }, e => { if (fly) toast(e.code === 1 ? 'Location permission denied' : 'Could not get your location'); },
-    { enableHighAccuracy: true, timeout: 15000 });
+    navigator.geolocation.getCurrentPosition(p => gotFirstFix(p.coords.latitude, p.coords.longitude, p.coords.accuracy, fly),
+      e => { if (fly) toast(e.code === 1 ? 'Location permission denied' : 'Could not get your location'); },
+      { enableHighAccuracy: true, timeout: 15000 });
   }
   $('locate').onclick = () => { if (S.follow) { setFollow(false); return; } if (S.me) { if (map.getZoom() < 15) map.setZoom(15); setFollow(true); } else locateOnce(true); if (!S.tracking) startPassiveWatch(); };
 

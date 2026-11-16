@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.3.1 (2026-11-16)
+- iOS app now built automatically (iPhone Simulator build + unsigned .ipa) and tested in the iPhone 17 Pro Max simulator.
+- Phone apps: finding your location uses the app's own location service, so iOS no longer shows a second "localhost would like to use your location" prompt.
+
 ## v1.3.0 (2026-11-16)
 - Continuous wake-up vibration: when the alarm goes off, the phone keeps vibrating (1.2 s buzz, 0.3 s pause) non-stop until you tap "I'm getting off" (safety stop after 5 minutes).
 - Android app: vibration and the phone's own alarm tone run natively on the alarm channel, so they keep going with the screen off and also when the phone is on silent.
