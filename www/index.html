@@ -394,6 +394,13 @@
     const target = map.containerPointToLatLng(userPt.add(shift));
     map.panTo(target, { animate: !!animate, duration: 0.6, noMoveStart: true });
   }
+  // Zoom + centre in one synchronous step (overlapping animations used to cancel the centring)
+  function focusOnMe(z) {
+    if (!S.me) return;
+    map.stop();
+    map.setView([S.me.lat, S.me.lng], z == null ? map.getZoom() : z, { animate: false });
+    centerOnMe(false);
+  }
   function setFollow(on) {
     S.follow = on;
     $('locate').classList.toggle('on', on);
@@ -499,7 +506,7 @@
       box.appendChild(b);
     });
   }
-  function fitLine(m) { map.fitBounds(L.latLngBounds(m._pts || decode(m.shape)), { paddingTopLeft: [20, 70], paddingBottomRight: [20, sheetH()] }); }
+  function fitLine(m, animate = true) { map.fitBounds(L.latLngBounds(m._pts || decode(m.shape)), { paddingTopLeft: [20, 70], paddingBottomRight: [20, sheetH()], animate }); }
   const sheetH = () => Math.min($('sheet').offsetHeight, innerHeight * 0.7) + 10;
 
   function renderStations() {
@@ -994,7 +1001,7 @@
   function gotFirstFix(lat, lng, acc, fly) {
     S.me = { lat, lng };
     drawMe(lat, lng, acc);
-    if (fly) { map.setView([lat, lng], 15); setFollow(true); }
+    if (fly) { focusOnMe(Math.max(map.getZoom(), 15)); setFollow(true); }
     if (S.T && activeTab === 'metro') renderStations();
   }
   let oneShotBusy = false;
@@ -1020,7 +1027,7 @@
       e => { if (fly) toast(e.code === 1 ? 'Location permission denied' : 'Could not get your location'); },
       { enableHighAccuracy: true, timeout: 15000 });
   }
-  $('locate').onclick = () => { if (S.follow) { setFollow(false); return; } if (S.me) { if (map.getZoom() < 15) map.setZoom(15); setFollow(true); } else locateOnce(true); if (!S.tracking) startPassiveWatch(); };
+  $('locate').onclick = () => { if (S.follow) { setFollow(false); return; } if (S.me) { focusOnMe(Math.max(map.getZoom(), 15)); setFollow(true); } else locateOnce(true); if (!S.tracking) startPassiveWatch(); };
 
   function status(t, warn) { $('status').textContent = t; $('status').classList.toggle('warn', !!warn); }
   let toastTimer;
@@ -1040,7 +1047,7 @@
     $('ver').textContent = `Metro Alert v${VERSION} · RTA data ${S.T.generated}`;
     $('busNote').textContent = `${S.T.bus.length} RTA bus routes · stops from RTA timetable data${d ? ' (' + d.slice(0, 4) + ')' : ''}. Some routes may have changed since, so check with RTA S'hail if unsure.`;
     renderLineChips(); renderStations(); renderBus(); drawMetro(); renderSaved();
-    if (S.dest) setDest(S.dest); else fitLine(currentLine());
+    if (S.dest) setDest(S.dest); else fitLine(currentLine(), false);
     if (!S.dest) showTab('metro');
     locateOnce(!S.dest);
   }

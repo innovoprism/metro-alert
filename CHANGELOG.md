@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.3.2 (2026-11-16)
+- Fix: on first launch (and when tapping ◎) the map now zooms in and centres on you in the visible part of the map. Before, overlapping animations could leave you hidden behind the bottom panel (found in the iPhone Simulator test).
+
 ## v1.3.1 (2026-11-16)
 - iOS app now built automatically (iPhone Simulator build + unsigned .ipa) and tested in the iPhone 17 Pro Max simulator.
 - Phone apps: finding your location uses the app's own location service, so iOS no longer shows a second "localhost would like to use your location" prompt.
