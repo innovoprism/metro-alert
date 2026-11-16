@@ -1,0 +1,89 @@
+name: Build iOS (Simulator + unsigned IPA)
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # attach files to the GitHub Release
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: latest-stable }
+
+      - name: Read version
+        id: ver
+        run: echo "v=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm install --no-fund --no-audit
+
+      - name: Create iOS project (v${{ steps.ver.outputs.v }})
+        run: npm run ios
+
+      - name: App icons
+        continue-on-error: true
+        run: npx --yes @capacitor/assets generate --ios --iconBackgroundColor '#E4002B'
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/sim CODE_SIGNING_ALLOWED=NO build | tail -25
+          mkdir -p dist
+          cd build/sim/Build/Products/Debug-iphonesimulator
+          ditto -c -k --keepParent App.app "$GITHUB_WORKSPACE/dist/metro-alert-v${{ steps.ver.outputs.v }}-ios-simulator.zip"
+
+      - name: Build unsigned IPA (for iPhone, sign with your Apple ID)
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/dev \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -25
+          rm -rf Payload && mkdir Payload
+          cp -R build/dev/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry "dist/metro-alert-v${{ steps.ver.outputs.v }}-unsigned.ipa" Payload
+
+      - name: Run in iPhone Simulator + screenshots
+        continue-on-error: true
+        run: |
+          DEV=$(xcrun simctl list devices available -j | python3 -c "
+          import json,sys
+          d=json.load(sys.stdin)['devices']
+          c=[(rt,x) for rt,l in d.items() if 'iOS' in rt for x in l if x['name'].startswith('iPhone')]
+          c.sort(key=lambda t:(t[0],'Pro' in t[1]['name']))
+          print(c[-1][1]['udid'])")
+          echo "Simulator: $(xcrun simctl list devices | grep $DEV)"
+          xcrun simctl boot "$DEV" || true
+          xcrun simctl bootstatus "$DEV" -b
+          APP=build/sim/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl install "$DEV" "$APP"
+          xcrun simctl privacy "$DEV" grant location-always com.metroalert.app || xcrun simctl privacy "$DEV" grant location com.metroalert.app || true
+          xcrun simctl location "$DEV" set 25.2547,55.3036 || true     # near BurJuman, Dubai
+          xcrun simctl launch "$DEV" com.metroalert.app
+          sleep 25
+          mkdir -p shots
+          xcrun simctl io "$DEV" screenshot "shots/ios-simulator-v${{ steps.ver.outputs.v }}.png"
+          # simulate a ride towards Union
+          xcrun simctl location "$DEV" start --speed=25 25.2547,55.3036 25.2665,55.3146 || true
+          sleep 20
+          xcrun simctl io "$DEV" screenshot "shots/ios-simulator-moving-v${{ steps.ver.outputs.v }}.png"
+          cp shots/*.png dist/
+
+      - name: Upload build files
+        uses: actions/upload-artifact@v4
+        with:
+          name: metro-alert-v${{ steps.ver.outputs.v }}-ios
+          path: dist/*
+
+      - name: Attach to GitHub Release v${{ steps.ver.outputs.v }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.ver.outputs.v }}
+          name: Metro Alert v${{ steps.ver.outputs.v }}
+          files: dist/*
