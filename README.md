@@ -80,6 +80,18 @@ When the app asks, allow **Location: Always** and **Notifications**. Background 
 npm run sync      # copies www/ into the Android and iOS projects
 ```
 
+## ETA (estimated arrival)
+For Metro and bus routes the ETA is: time to the next stop (its distance ÷ your current speed, or the timetable when the train is stopped) + the RTA timetable time for every remaining stop, including dwell time at each station. Each finished stop-to-stop time is compared with the timetable, so a late or early train adjusts the rest of the estimate. Underground, without GPS, the ETA keeps counting on the timetable and the alarm still rings.
+
+## Usage statistics (web, Android, iOS)
+1. Create a free account at https://www.goatcounter.com and add a site, e.g. code `metroalert`.
+2. Put the code in `www/config.js`: `goatcounter: 'metroalert'`, then push (new APK/IPA builds automatically).
+3. Open https://metroalert.goatcounter.com to see:
+   - `/open/web`, `/open/android`, `/open/ios`: app opens and unique visitors per day, per platform
+   - `install/<platform>`: first launches (new users)
+   - `trip-metro/<platform>`, `trip-bus/...`, `alarm/<platform>`: trips started and alarms rung
+Nothing personal is sent: no name, location, phone number or device ID. APK/IPA download counts are also on the GitHub Releases page.
+
 ## Transit data
 `www/data/transit.json` is built from RTA's official GTFS feed (the public timetable data RTA publishes on Dubai Pulse):
 - **Metro:** stations and line order are up to date; renamed stations are listed in `scripts/build-transit.py` → `STATION_RENAMES` (latest: ONPASSIVE → Garmin, Sep 2026).

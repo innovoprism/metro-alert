@@ -98,6 +98,7 @@
   .nextbox .big { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
   .nextbox .t { flex: 1; min-width: 0; }
   .nextbox small { opacity: .7; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .nextbox .nextin { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px; opacity: .9; white-space: nowrap; }
   .nextbox b { display: block; font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
   .stat { background: var(--bg); border-radius: 14px; padding: 9px; text-align: center; }
@@ -219,16 +220,22 @@
       <div class="label"><span>…and always when within</span><output id="radiusOut">500 m</output></div>
       <input type="range" id="radius" min="150" max="3000" step="50" value="500">
       <label class="toggle"><input type="checkbox" id="headsup" checked> Heads-up buzz at 2× distance</label>
+      <div class="label">Alert</div>
+      <div class="seg" id="alertMode">
+        <button data-m="sound">🔔 Vibrate + sound</button>
+        <button data-m="vibrate">📳 Vibrate only</button>
+      </div>
     </div>
 
     <div id="live">
       <div class="nextbox" id="nextbox">
         <div class="big" id="togo">–</div>
         <div class="t"><small id="nextLbl">Next stop</small><b id="nextName">Locating…</b></div>
+        <div class="nextin" id="nextIn"></div>
       </div>
       <div class="stats">
         <div class="stat"><b id="dist">–</b><span>Distance</span></div>
-        <div class="stat"><b id="eta">–</b><span>ETA</span></div>
+        <div class="stat"><b id="eta">–</b><span id="etaLbl">ETA</span></div>
         <div class="stat"><b id="speed">–</b><span>km/h</span></div>
       </div>
       <div class="progress"><i id="bar"></i></div>
@@ -257,6 +264,7 @@
 <script src="vendor/leaflet-rotate.js"></script>
 <script src="version.js"></script>
 <script src="vendor/capacitor.js"></script>
+<script src="config.js"></script>
 <script>
 (() => {
   'use strict';
@@ -269,7 +277,29 @@
   const Haptics = plugin('Haptics');
   const LocalNotif = plugin('LocalNotifications');
   const isAndroid = isNative && CapX.Capacitor.getPlatform && CapX.Capacitor.getPlatform() === 'android';
-  const AlarmVibe = isAndroid ? plugin('AlarmVibe') : null;   // native: non-stop vibration + alarm tone
+  const platform = isNative ? CapX.Capacitor.getPlatform() : 'web';
+  const AlarmVibe = isNative ? plugin('AlarmVibe') : null;   // native (Android + iOS): non-stop vibration + alarm sound, also in background
+
+  // ================= Usage statistics (anonymous) =================
+  // Counts app opens, first installs, trips and alarms per platform (web / android / ios)
+  // in GoatCounter. No names, no locations, no device IDs are sent.
+  const GC_CODE = ((window.METRO_ALERT_CONFIG || {}).goatcounter || '').trim();
+  const APP_VER = window.APP_VERSION || 'dev';
+  function gcHit(path, title, isEvent) {
+    if (!GC_CODE) return;
+    try {
+      const q = new URLSearchParams({ p: path, t: title, e: isEvent ? 'true' : 'false', r: '',
+        s: `${screen.width},${screen.height},${devicePixelRatio || 1}`, rnd: Math.random().toString(36).slice(2) });
+      fetch(`https://${GC_CODE}.goatcounter.com/count?${q}`, { mode: 'no-cors', keepalive: true, credentials: 'omit' }).catch(() => {});
+    } catch {}
+  }
+  function track(name) { gcHit(`${name}/${platform}`, `${name} (${platform})`, true); }
+  function trackOpen() {
+    gcHit(`/open/${platform}`, `Metro Alert ${platform} v${APP_VER}`, false);
+    try {
+      if (!localStorage.getItem('ma_installed')) { localStorage.setItem('ma_installed', '1'); track('install'); }
+    } catch {}
+  }
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem('ma2_' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -284,6 +314,8 @@
     radius: store.get('radius', 500),
     earlyK: store.get('earlyK', 1),
     headsup: store.get('headsup', true),
+    alertMode: store.get('alertMode', 'sound'),   // 'sound' = vibrate + sound, 'vibrate' = vibrate only
+    _delay: 1, _eta: null,
     saved: store.get('saved', []),
     line: store.get('line', 'red-lp'),
     tracking: false, alarmed: false, warned: false,
@@ -474,11 +506,11 @@
     if (!d || !S.T) return null;
     if (d.kind === 'metro') {
       const m = lineById(d.line); if (!m) return null;
-      return { list: m.stops.map(i => ({ name: S.T.stations[i].name, lat: S.T.stations[i].lat, lng: S.T.stations[i].lng })), fixedDir: false, trig: 300 };
+      return { list: m.stops.map(i => ({ name: S.T.stations[i].name, lat: S.T.stations[i].lat, lng: S.T.stations[i].lng })), secs: m.secs, fixedDir: false, trig: 300 };
     }
     if (d.kind === 'bus') {
       const r = routeByN(d.route); if (!r || !r.dirs[d.dir]) return null;
-      return { list: r.dirs[d.dir].stops.map(i => ({ name: S.T.busStops[i][0], lat: S.T.busStops[i][1], lng: S.T.busStops[i][2] })), fixedDir: true, trig: 120 };
+      return { list: r.dirs[d.dir].stops.map(i => ({ name: S.T.busStops[i][0], lat: S.T.busStops[i][1], lng: S.T.busStops[i][2] })), secs: r.dirs[d.dir].secs, fixedDir: true, trig: 120 };
     }
     return null;
   }
@@ -641,6 +673,9 @@
   document.querySelectorAll('#early button').forEach(b => b.onclick = () => setEarly(+b.dataset.k));
   $('radius').value = S.radius; $('radiusOut').textContent = fmtM(S.radius); $('headsup').checked = S.headsup;
   $('radius').addEventListener('input', () => { S.radius = +$('radius').value; $('radiusOut').textContent = fmtM(S.radius); store.set('radius', S.radius); drawDest(); });
+  const showAlertMode = () => document.querySelectorAll('#alertMode button').forEach(b => b.classList.toggle('on', b.dataset.m === S.alertMode));
+  document.querySelectorAll('#alertMode button').forEach(b => b.onclick = () => { S.alertMode = b.dataset.m; store.set('alertMode', S.alertMode); showAlertMode(); });
+  showAlertMode();
   $('headsup').addEventListener('change', () => { S.headsup = $('headsup').checked; store.set('headsup', S.headsup); drawDest(); });
 
   // ================= Saved =================
@@ -760,7 +795,7 @@
     stopWakeVibration();
     nativeAlarm = false;
     if (AlarmVibe) {
-      try { await AlarmVibe.start({ sound: true, maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
+      try { await AlarmVibe.start({ sound: S.alertMode === 'sound', maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
     }
     if (!nativeAlarm) {
       const pulse = () => {
@@ -798,14 +833,18 @@
     $('alarm').classList.add('on');
     startWakeVibration().then(() => {
       // Android app: the phone's own alarm tone loops natively. Elsewhere: in-app beeps.
-      if (!nativeAlarm && $('alarm').classList.contains('on')) { alarmBeeps(); alarmTimer = setInterval(alarmBeeps, 2200); }
+      if (!nativeAlarm && S.alertMode === 'sound' && $('alarm').classList.contains('on')) { alarmBeeps(); alarmTimer = setInterval(alarmBeeps, 2200); }
     });
     notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
+    repeatNotify((isBus ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent, $('alarmMsg').textContent);
+    cancelBackupAlarm();
+    track('alarm');
   }
   function stopAlarm() {
     $('alarm').classList.remove('on');
     clearInterval(alarmTimer); alarmTimer = null;
     stopWakeVibration();
+    cancelRepeatNotify();
   }
   $('dismiss').onclick = () => { stopAlarm(); if (S.tracking && S.alarmed) stopTracking('Arrived. Have a good day! 👋'); };
 
@@ -814,17 +853,56 @@
     try {
       if (isNative && LocalNotif) {
         await LocalNotif.requestPermissions();
-        await LocalNotif.createChannel({ id: 'arrival', name: 'Arrival alarm', importance: 5, vibration: true, visibility: 1 }).catch(() => {});
+        await LocalNotif.createChannel({ id: 'alarm-sound', name: 'Arrival alarm (sound + vibration)', importance: 5, vibration: true, visibility: 1, sound: 'alarm.wav' }).catch(() => {});
+        await LocalNotif.createChannel({ id: 'alarm-vibe', name: 'Arrival alarm (vibration only)', importance: 5, vibration: true, visibility: 1 }).catch(() => {});
       } else if ('Notification' in window && Notification.permission === 'default') {
         await Notification.requestPermission();
       }
     } catch {}
   }
   let notifId = 1;
+  const sndMode = () => S.alertMode === 'sound';
+  // One native notification: alarm sound + vibration (or vibration only), shown even when the app is in the background
+  function nativeNote(id, title, body, urgent, at) {
+    const n = { id, title, body, channelId: sndMode() ? 'alarm-sound' : 'alarm-vibe', autoCancel: true, ongoing: !!urgent };
+    if (sndMode()) n.sound = 'alarm.wav';
+    if (urgent) n.interruptionLevel = 'active';
+    if (at) n.schedule = { at: new Date(at), allowWhileIdle: true };
+    return n;
+  }
+  // While the alarm is not dismissed, ring again every 30 s (works even if the app is suspended)
+  const REPEAT_IDS = [801, 802, 803, 804, 805, 806];
+  async function repeatNotify(title, body) {
+    if (!isNative || !LocalNotif) return;
+    try {
+      const now = Date.now();
+      await LocalNotif.schedule({ notifications: REPEAT_IDS.map((id, i) => nativeNote(id, title, body + ' (reminder)', true, now + (i + 1) * 30000)) });
+    } catch {}
+  }
+  function cancelRepeatNotify() {
+    if (isNative && LocalNotif) LocalNotif.cancel({ notifications: REPEAT_IDS.map(id => ({ id })) }).catch(() => {});
+  }
+  // Timetable backup: if the phone loses GPS (tunnel) or iOS pauses the app, this pre-scheduled
+  // notification still wakes you at the time the RTA timetable says you reach your alarm stop.
+  const BACKUP_ID = 900; let backupAt = 0;
+  function scheduleBackupAlarm(at) {
+    if (!isNative || !LocalNotif || S.alarmed) return;
+    if (Math.abs(at - backupAt) < 20000) return;          // only reschedule when the estimate moves
+    backupAt = at;
+    LocalNotif.cancel({ notifications: [{ id: BACKUP_ID }] }).catch(() => {}).then(() => {
+      if (at > Date.now() + 10000) LocalNotif.schedule({ notifications: [nativeNote(BACKUP_ID,
+        (S.dest.kind === 'metro' ? '🚇 ' : '🚌 ') + 'Your stop is coming up',
+        `${S.dest.name} is close (timetable estimate). Get ready to exit.`, true, at)] }).catch(() => {});
+    });
+  }
+  function cancelBackupAlarm() {
+    backupAt = 0;
+    if (isNative && LocalNotif) LocalNotif.cancel({ notifications: [{ id: BACKUP_ID }] }).catch(() => {});
+  }
   async function notify(title, body, urgent) {
     try {
       if (isNative && LocalNotif) {
-        await LocalNotif.schedule({ notifications: [{ id: notifId++, title, body, channelId: 'arrival', ongoing: !!urgent, autoCancel: true }] });
+        await LocalNotif.schedule({ notifications: [nativeNote(notifId++, title, body, urgent)] });
       } else if ('Notification' in window && Notification.permission === 'granted') {
         const opts = { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', tag: 'metro-alert', renotify: true,
           requireInteraction: !!urgent, vibrate: urgent ? [500, 150, 500, 150, 500] : [250, 120, 250] };
@@ -858,6 +936,65 @@
     return { next, nextName: L_[next].name, togo: Math.abs(dIdx - next), atNext: haversine(me, L_[next]) };
   }
 
+  // ================= Timetable ETA =================
+  // RTA timetable seconds from stop k to stop k+1 (running time + dwell time at stop k)
+  const segSec = k => { const s = S._route && S._route.secs; return (s && s[k]) || 90; };
+  const schedBetween = (a, b) => { let t = 0; for (let k = Math.min(a, b); k < Math.max(a, b); k++) t += segSec(k); return t; };
+  const travelDir = next => (S._route.fixedDir ? 1 : (Math.sign(S.dest.idx - next) || S._dir || 1));
+
+  // ETA = live time to the next stop (its distance ÷ current speed, or the timetable when stopped/slow)
+  //     + timetable time for the remaining stops, scaled by how late/early this ride has been so far.
+  function estimateRouteEta(P, avg) {
+    const R = S._route, d = S.dest.idx, next = P.next, dir = travelDir(next);
+    const prev = Math.min(Math.max(next - dir, 0), R.list.length - 1);
+    const seg = prev === next ? 0 : segSec(Math.min(prev, next));
+    const full = prev === next ? 1 : Math.max(50, haversine(R.list[prev], R.list[next]));
+    const toNext = haversine(S.me, R.list[next]);
+    const sched = seg * Math.min(1, toNext / full) * S._delay;
+    const tNext = avg > 3 ? Math.min(toNext / avg, Math.max(sched * 2, 30)) : sched;
+    return { tNext, total: tNext + schedBetween(next, d) * S._delay };
+  }
+  // Learn the delay factor: compare each finished stop-to-stop time with the timetable
+  function learnDelay(P, now) {
+    if (S._lastNext != null && P.next !== S._lastNext) {
+      const old = S._lastNext, dir = Math.sign(P.next - old);
+      if (S._lastNextAt && Math.abs(P.next - old) === 1) {
+        const k = Math.min(old - dir, old);
+        if (k >= 0 && k < S._route.list.length - 1) {
+          const r = (now - S._lastNextAt) / 1000 / segSec(k);
+          if (r > 0.4 && r < 3) S._delay = Math.min(1.6, Math.max(0.8, S._delay * 0.6 + r * 0.4));
+        }
+      }
+      S._lastNextAt = now;
+    }
+    S._lastNext = P.next;
+  }
+  // Seconds before arrival at which the "N stops early" alarm should ring (for the timetable backup)
+  function earlyLeadSecs() {
+    const R = S._route, d = S.dest.idx, k = S._k || 0;
+    if (!R || !k) return 45;
+    const dir = travelDir(S._lastNext != null ? S._lastNext : d - 1);
+    return schedBetween(Math.min(Math.max(d - k * dir, 0), R.list.length - 1), d) * S._delay + 10;
+  }
+  const fmtDur = sec => sec < 45 ? '<1 min' : sec < 3600 ? Math.round(sec / 60) + ' min' : Math.floor(sec / 3600) + ' h ' + Math.round((sec % 3600) / 60) + ' min';
+  const fmtMs = sec => { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
+  const fmtClock = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // Live countdown between GPS fixes (also keeps running underground) + timetable backup alarm
+  let etaTicker = null;
+  function renderEta() {
+    const E = S._eta; if (!S.tracking || !E) return;
+    const now = Date.now(), rem = Math.max(0, (E.at - now) / 1000);
+    $('eta').textContent = fmtDur(rem);
+    $('etaLbl').textContent = 'ETA · ' + fmtClock(E.at);
+    if (E.nextAt && E.nextName) $('nextIn').textContent = E.nextAt > now ? 'in ' + fmtMs((E.nextAt - now) / 1000) : 'arriving';
+    const stale = S.lastFix && now - S.lastFix > 25000;
+    if (stale && S._route && !S.alarmed && rem <= earlyLeadSecs()) {
+      S.alarmed = true;
+      fireAlarm('Your stop is coming up!', `GPS lost (tunnel?). By the RTA timetable you are about to reach ${S.dest.name}. Check the station name.`);
+    }
+  }
+
   function onPosition(lat, lng, acc, speed, heading) {
     const now = Date.now();
     S.lastFix = now; S.me = { lat, lng };
@@ -877,14 +1014,21 @@
 
     $('dist').textContent = fmtM(d);
     $('speed').textContent = avg > 0.5 ? Math.round(avg * 3.6) : '0';
-    const toGo = Math.max(0, d - S.radius);
-    $('eta').textContent = avg > 1.5 ? (toGo / avg < 60 ? '<1 min' : Math.round(toGo / avg / 60) + ' min') : '–';
+    if (!S._route) {           // pin / single stop: straight-line distance ÷ speed
+      if (avg > 1.5) S._eta = { at: now + d / avg * 1000 };
+      else if (!S._eta) { $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA'; }
+    }
     $('bar').style.width = Math.min(100, Math.max(0, (1 - (d - S.radius) / (S.startDist - S.radius)) * 100)) + '%';
     status(acc > 150 ? `Weak GPS (±${Math.round(acc)} m), so the distance may be off.` : `Tracking · GPS ±${Math.round(acc)} m`, acc > 150);
 
     // ---- stops to go ----
     const P = routeProgress(S.me);
+    $('nextIn').textContent = '';
     if (P && !P.off && !P.past) {
+      learnDelay(P, now);
+      const E = estimateRouteEta(P, avg);
+      S._eta = { at: now + E.total * 1000, nextAt: now + E.tNext * 1000, nextName: P.nextName };
+      scheduleBackupAlarm(S._eta.at - earlyLeadSecs() * 1000 + 20000);
       $('togo').textContent = P.togo === 0 ? '🎯' : P.togo + 1;
       $('nextLbl').textContent = P.togo === 0 ? 'Next stop is yours' : `Next stop · ${P.togo + 1} stops to go`;
       $('nextName').textContent = P.nextName;
@@ -896,6 +1040,8 @@
     } else {
       $('togo').textContent = '📍'; $('nextLbl').textContent = 'Destination'; $('nextName').textContent = S.dest.name;
     }
+
+    renderEta();
 
     // ---- N stops early alarm ----
     const R = S._route, k = S._k;
@@ -929,10 +1075,14 @@
     if (!S.dest) return toast('Choose a stop first');
     unlockAudio();
     await setupNotifications();
-    Object.assign(S, { tracking: true, alarmed: false, warned: false, startDist: null, speeds: [], prev: null, armed: {}, _dir: null });
+    Object.assign(S, { tracking: true, alarmed: false, warned: false, startDist: null, speeds: [], prev: null, armed: {}, _dir: null,
+      _delay: 1, _eta: null, _lastNext: null, _lastNextAt: 0 });
+    $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA';
+    clearInterval(etaTicker); etaTicker = setInterval(renderEta, 1000);
+    track('trip-' + (S.dest.kind || 'pin'));
     S._route = routeStops();
     document.body.classList.add('tracking');
-    $('start').style.display = 'none'; $('stop').style.display = ''; $('live').style.display = ''; $('opts').style.display = 'none'; $('change').style.display = 'none';
+    $('start').style.display = 'none'; $('stop').style.display = ''; $('live').style.display = 'block'; $('opts').style.display = 'none'; $('change').style.display = 'none';
     $('nextbox').style.display = S._route ? '' : 'none';
     drawDest();
     if (map.getZoom() < 15) map.setZoom(15);
@@ -963,11 +1113,12 @@
 
     clearInterval(staleTimer);
     staleTimer = setInterval(() => {
-      if (S.tracking && S.lastFix && Date.now() - S.lastFix > 45000) status('No GPS signal for a while (underground?). The alarm will fire when the signal returns.', true);
+      if (S.tracking && S.lastFix && Date.now() - S.lastFix > 45000) status('No GPS signal (underground?). The ETA keeps counting on the RTA timetable and the alarm will still ring on time.', true);
     }, 10000);
   }
   async function stopTracking(msg) {
     S.tracking = false;
+    clearInterval(etaTicker); cancelBackupAlarm();
     clearInterval(staleTimer);
     if (S.watchId != null) {
       if (isNative && BgGeo) { try { await BgGeo.removeWatcher({ id: S.watchId }); } catch {} }
@@ -1052,6 +1203,7 @@
     locateOnce(!S.dest);
   }
   init();
+  trackOpen();
 
   if (!isNative && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!isNative && !window.isSecureContext) status('GPS needs HTTPS (or localhost). Host this on an https:// address.', true);

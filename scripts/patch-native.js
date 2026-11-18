@@ -43,6 +43,10 @@ public class MainActivity extends BridgeActivity {
 }
 `);
   console.log('Added AlarmVibePlugin (continuous vibration) and registered it in MainActivity');
+  const rawDir = path.join(root, 'android/app/src/main/res/raw');
+  fs.mkdirSync(rawDir, { recursive: true });
+  fs.copyFileSync(path.join(root, 'www/alarm.wav'), path.join(rawDir, 'alarm.wav'));
+  console.log('Added res/raw/alarm.wav (notification sound)');
 } else if (target === 'ios') {
   const f = path.join(root, 'ios/App/App/Info.plist');
   let x = fs.readFileSync(f, 'utf8');
@@ -56,6 +60,31 @@ public class MainActivity extends BridgeActivity {
   add('UIBackgroundModes', '<array>\n\t\t<string>location</string>\n\t\t<string>audio</string>\n\t</array>');
   fs.writeFileSync(f, x);
   console.log('Patched Info.plist');
+
+  // Native wake-up alarm (AlarmVibe) + view controller that registers it, see native/ios/
+  const appDir = path.join(root, 'ios/App/App');
+  const pbxF = path.join(root, 'ios/App/App.xcodeproj/project.pbxproj');
+  let pbx = fs.readFileSync(pbxF, 'utf8');
+  const ref = /([0-9A-F]{24}) \/\* AppDelegate\.swift \*\/ = \{isa = PBXFileReference/.exec(pbx);
+  const bld = /([0-9A-F]{24}) \/\* AppDelegate\.swift in Sources \*\/ = \{isa = PBXBuildFile/.exec(pbx);
+  if (!ref || !bld) throw new Error('Could not find AppDelegate.swift in project.pbxproj');
+  let n = 0;
+  const newId = () => ('AA11' + String(Date.now() % 1e8).padStart(8, '0') + String(++n).padStart(12, '0')).slice(0, 24);
+  for (const file of ['AlarmVibePlugin.swift', 'MainViewController.swift']) {
+    fs.copyFileSync(path.join(root, 'native/ios', file), path.join(appDir, file));
+    if (pbx.includes(`/* ${file} */`)) continue;
+    const fr = newId(), bf = newId();
+    pbx = pbx
+      .replace('/* Begin PBXBuildFile section */', `/* Begin PBXBuildFile section */\n\t\t${bf} /* ${file} in Sources */ = {isa = PBXBuildFile; fileRef = ${fr} /* ${file} */; };`)
+      .replace('/* Begin PBXFileReference section */', `/* Begin PBXFileReference section */\n\t\t${fr} /* ${file} */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ${file}; sourceTree = "<group>"; };`)
+      .replace(new RegExp(`(\\t+)${ref[1]} /\\* AppDelegate\\.swift \\*/,`), (m, tabs) => `${m}\n${tabs}${fr} /* ${file} */,`)
+      .replace(new RegExp(`(\\t+)${bld[1]} /\\* AppDelegate\\.swift in Sources \\*/,`), (m, tabs) => `${m}\n${tabs}${bf} /* ${file} in Sources */,`);
+  }
+  fs.writeFileSync(pbxF, pbx);
+  const sbF = path.join(appDir, 'Base.lproj/Main.storyboard');
+  fs.writeFileSync(sbF, fs.readFileSync(sbF, 'utf8')
+    .replace('customClass="CAPBridgeViewController" customModule="Capacitor"', 'customClass="MainViewController" customModule="App" customModuleProvider="target"'));
+  console.log('Added AlarmVibePlugin (background vibration + alarm sound) and MainViewController');
 } else {
   console.error('Usage: node scripts/patch-native.js android|ios');
   process.exit(1);

@@ -91,6 +91,16 @@ def encode(pts):
         plat, plng = ilat, ilng
     return "".join(out)
 
+def hms(t):
+    try:
+        h, m, x = t.split(":"); return int(h) * 3600 + int(m) * 60 + int(x)
+    except Exception:
+        return None
+
+def median(v):
+    v = sorted(v); n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+
 def main(src, dst):
     rd = open_feed(src)
     routes = {r["route_id"]: r for r in csv.DictReader(rd("routes.txt"))}
@@ -100,15 +110,27 @@ def main(src, dst):
     print("reading stop_times…", file=sys.stderr)
     seq = collections.defaultdict(list)
     for row in csv.DictReader(rd("stop_times.txt")):
-        seq[row["trip_id"]].append((int(row["stop_sequence"]), row["stop_id"]))
+        seq[row["trip_id"]].append((int(row["stop_sequence"]), row["stop_id"], hms(row["arrival_time"] or row["departure_time"])))
 
     patterns = collections.defaultdict(collections.Counter)
+    seg_samples = collections.defaultdict(list)   # pattern -> list of per-trip segment durations
+
+    def seg_times(key, n):
+        """Median scheduled seconds between consecutive stops (includes dwell at the stop)."""
+        sm = seg_samples.get(key) or []
+        if not sm:
+            return [0] * (n - 1)
+        return [max(20, int(round(median([trip[k] for trip in sm])))) for k in range(n - 1)]
     for tid, lst in seq.items():
         t = trips.get(tid)
         if not t:
             continue
         lst.sort()
-        patterns[(t["route_id"], t["direction_id"])][(tuple(s for _, s in lst), t["trip_headsign"], t["shape_id"])] += 1
+        key = (tuple(x[1] for x in lst), t["trip_headsign"], t["shape_id"])
+        patterns[(t["route_id"], t["direction_id"])][key] += 1
+        ts = [x[2] for x in lst]
+        if None not in ts:
+            seg_samples[key].append([b - a for a, b in zip(ts, ts[1:])])
 
     shapes = collections.defaultdict(list)
     for row in csv.DictReader(rd("shapes.txt")):
@@ -133,9 +155,10 @@ def main(src, dst):
         return station_ids[name]
 
     by_short = {r["route_short_name"]: rid for rid, r in routes.items() if r["route_type"] == "1"}
-    red_seq, _, red_shape = top(by_short["MRed"], "0")     # Centrepoint -> Expo 2020
-    br_seq, _, br_shape = top(by_short["MBrch"], "0")      # Jebel Ali -> UAE Exchange (Life Pharmacy)
-    grn_seq, _, grn_shape = top(by_short["MGrn"], "1")     # Creek -> Etisalat (e&)
+    red_key = top(by_short["MRed"], "0"); red_seq, _, red_shape = red_key       # Centrepoint -> Expo 2020
+    br_key = top(by_short["MBrch"], "0"); br_seq, _, br_shape = br_key         # Jebel Ali -> Life Pharmacy
+    grn_key = top(by_short["MGrn"], "1"); grn_seq, _, grn_shape = grn_key      # Creek -> e&
+    red_t = seg_times(red_key, len(red_seq)); br_t = seg_times(br_key, len(br_seq)); grn_t = seg_times(grn_key, len(grn_seq))
 
     red = [station(s) for s in red_seq]
     branch = [station(s) for s in br_seq]
@@ -152,11 +175,11 @@ def main(src, dst):
     TOL = 1.2e-4  # ~13 m
     metro = [
         {"id": "red-lp", "name": "Red Line", "to": "Life Pharmacy", "color": "#E4002B",
-         "stops": red_lp, "shape": encode(simplify(red_pts[: cut + 1] + br_pts, TOL))},
+         "stops": red_lp, "secs": red_t[:split] + br_t, "shape": encode(simplify(red_pts[: cut + 1] + br_pts, TOL))},
         {"id": "red-expo", "name": "Red Line", "to": "Expo 2020", "color": "#E4002B",
-         "stops": red, "shape": encode(simplify(red_pts, TOL))},
+         "stops": red, "secs": red_t, "shape": encode(simplify(red_pts, TOL))},
         {"id": "green", "name": "Green Line", "to": "Creek / e&", "color": "#00A651",
-         "stops": green, "shape": encode(simplify(shapes[grn_shape], TOL))},
+         "stops": green, "secs": grn_t[::-1], "shape": encode(simplify(shapes[grn_shape], TOL))},
     ]
     for st in stations:
         n = len(st["pts"])
@@ -191,6 +214,7 @@ def main(src, dst):
             sq, head, shp = tp
             dirs.append({"to": clean(head) or clean(stops[sq[-1]]["stop_name"]),
                          "stops": [bstop(s) for s in sq],
+                         "secs": seg_times(tp, len(sq)),
                          "shape": encode(simplify(shapes.get(shp, []), TOL)) if shp in shapes else ""})
         if dirs:
             buses.append({"n": r["route_short_name"], "name": clean(r["route_long_name"]), "dirs": dirs})

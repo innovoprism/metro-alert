@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.0 (2026-11-19)
+- **Timetable ETA:** arrival time is estimated from the RTA timetable (stop-to-stop times including dwell at each station), the live distance to the next stop and your current speed. It learns from the ride: if the train runs late or early, the rest of the estimate adjusts. Shows the minutes left, the arrival clock time and a countdown to the next stop.
+- **Works underground:** when GPS drops, the ETA keeps counting on the timetable and the alarm still rings on time ("GPS lost, by the RTA timetable...").
+- **Background alarm:** the phone apps vibrate continuously and play the alarm sound even when the app is in the background or the screen is off (new native iOS alarm; Android already had one). Alarm notifications now carry the alarm sound and repeat every 30 s until dismissed. A timetable-timed backup notification is scheduled in case the phone pauses the app.
+- **Alert setting:** choose "Vibrate + sound" or "Vibrate only".
+- **Usage statistics:** anonymous counts of app opens, first installs, trips and alarms for web, Android and iOS (GoatCounter, set in `www/config.js`).
+- Fix: the live panel (next stop, distance, ETA, speed) was not shown while tracking.
+
 ## v1.3.2 (2026-11-16)
 - Fix: on first launch (and when tapping ◎) the map now zooms in and centres on you in the visible part of the map. Before, overlapping animations could leave you hidden behind the bottom panel (found in the iPhone Simulator test).
 
