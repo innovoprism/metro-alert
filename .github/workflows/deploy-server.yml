@@ -31,7 +31,7 @@ jobs:
           npm install --no-fund --no-audit
           npm run vendor
           cd server
-          npm install --no-save --no-fund --no-audit wrangler@4
+          npm install --no-fund --no-audit
           W=./node_modules/.bin/wrangler
           # database: create once, then reuse
           DBID=$($W d1 list --json | node -e "let d=JSON.parse(require('fs').readFileSync(0,'utf8'));let x=d.find(v=>v.name==='metro-alert-db');process.stdout.write(x?x.uuid:'')")

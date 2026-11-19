@@ -1,0 +1,6 @@
+{
+  "name": "metro-alert-server",
+  "private": true,
+  "description": "Metro Alert API + web hosting (Cloudflare Worker + D1)",
+  "devDependencies": { "wrangler": "^4.0.0" }
+}
