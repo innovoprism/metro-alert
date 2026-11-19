@@ -229,6 +229,32 @@ def main(src, dst):
     for i, s in enumerate(bus_stops):
         s.append(sorted(serves[i], key=route_key))
 
+    # ---------------- Metro headways (minutes between trains, by hour) ----------------
+    # wd = weekdays (Mon-Fri), we = weekend (Sat-Sun); used to estimate the wait on the platform.
+    cal = {c["service_id"]: c for c in csv.DictReader(rd("calendar.txt"))}
+    first_dep = collections.defaultdict(list)
+    for tid, lst in seq.items():
+        t = trips.get(tid)
+        if not t or t["route_id"] not in (by_short["MRed"], by_short["MGrn"]) or lst[0][2] is None:
+            continue
+        c = cal.get(t["service_id"]) or {}
+        line = "Red" if t["route_id"] == by_short["MRed"] else "Green"
+        if c.get("monday") == "1":
+            first_dep[(line, "wd", t["direction_id"])].append(lst[0][2] // 60)
+        if c.get("saturday") == "1":
+            first_dep[(line, "we", t["direction_id"])].append(lst[0][2] // 60)
+    headways = {}
+    for line in ("Red", "Green"):
+        headways[line] = {}
+        for dt in ("wd", "we"):
+            gaps = collections.defaultdict(list)
+            for d in ("0", "1"):
+                v = sorted(set(first_dep[(line, dt, d)]))
+                for a, b in zip(v, v[1:]):
+                    if 0 < b - a <= 30:
+                        gaps[(a // 60) % 24].append(b - a)
+            headways[line][dt] = [round(median(gaps[h]), 1) if gaps[h] else None for h in range(24)]
+
     feed_dates = ""
     try:
         cal = list(csv.DictReader(rd("calendar.txt")))
@@ -242,6 +268,7 @@ def main(src, dst):
         "source": "RTA Dubai GTFS",
         "stations": stations,
         "metro": metro,
+        "headways": headways,
         "busStops": bus_stops,
         "bus": buses,
     }

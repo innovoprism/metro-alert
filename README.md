@@ -83,7 +83,30 @@ npm run sync      # copies www/ into the Android and iOS projects
 ## ETA (estimated arrival)
 For Metro and bus routes the ETA is: time to the next stop (its distance ÷ your current speed, or the timetable when the train is stopped) + the RTA timetable time for every remaining stop, including dwell time at each station. Each finished stop-to-stop time is compared with the timetable, so a late or early train adjusts the rest of the estimate. Underground, without GPS, the ETA keeps counting on the timetable and the alarm still rings.
 
-## Usage statistics (web, Android, iOS)
+## Server (user counts, learned timings, web hosting)
+The `server/` folder is a Cloudflare Worker with a D1 database (free plan is enough). It:
+- counts users anonymously (random install id): total, active today / 7 / 30 days, new users, versions, per web / Android / iOS
+- collects measured stop-to-stop times from rides and returns the learned times per time of day
+- tells the apps about new versions (`/api/version`)
+- hosts the web app itself, and a password-protected stats page at `/stats`
+
+One-time setup:
+1. Create a free account at https://dash.cloudflare.com/sign-up and open **Workers & Pages** once (this creates your `*.workers.dev` address).
+2. Copy your **Account ID** (Workers & Pages page, right side).
+3. **My Profile → API Tokens → Create Token →** template **Edit Cloudflare Workers**, add the permission **Account · D1 · Edit**, create it and copy the token.
+4. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**, add:
+   - `CLOUDFLARE_API_TOKEN` (the token), `CLOUDFLARE_ACCOUNT_ID` (the ID)
+   - `STATS_KEY`: a password of your choice for the stats page
+5. **Actions → Deploy server (Cloudflare) → Run workflow.** The run summary shows the server address.
+6. Put that address in `www/config.js` (`api: 'https://metro-alert.<you>.workers.dev'`) and push, so the phone apps use it.
+
+Stats: open `https://metro-alert.<you>.workers.dev/stats` and enter your STATS_KEY.
+
+## Updates
+- **Web:** the app checks for a new version and offers a reload.
+- **Phone apps:** new screens/logic (`www/`) are downloaded over the air and used on the next start. A release that changes native code must raise `nativeMin` in `package.json`; installed apps then offer the new APK (Android) or ask to reinstall (iPhone).
+
+## Usage statistics (old GoatCounter option, replaced by the server)
 1. Create a free account at https://www.goatcounter.com and add a site, e.g. code `metroalert`.
 2. Put the code in `www/config.js`: `goatcounter: 'metroalert'`, then push (new APK/IPA builds automatically).
 3. Open https://metroalert.goatcounter.com to see:

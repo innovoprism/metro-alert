@@ -2,3 +2,7 @@ node_modules/
 /android/
 /ios/
 /dist/
+server/node_modules/
+server/.wrangler/
+server/.dev.vars
+server/deploy.log

@@ -1,0 +1,19 @@
+# Metro Alert server: hosts the web app (../www) and the API (/api/*) + stats page (/stats).
+# Deployed automatically by .github/workflows/deploy-server.yml
+name = "metro-alert"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[assets]
+directory = "../www"
+binding = "ASSETS"
+run_worker_first = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "metro-alert-db"
+database_id = "DATABASE_ID"   # filled in by the deploy workflow
+
+[vars]
+GITHUB_REPO = "innovoprism/metro-alert"

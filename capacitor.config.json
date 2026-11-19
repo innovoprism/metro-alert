@@ -1,5 +1,16 @@
 {
   "appId": "com.metroalert.app",
   "appName": "Metro Alert",
-  "webDir": "www"
+  "webDir": "www",
+  "plugins": {
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "resetWhenUpdate": true,
+      "appReadyTimeout": 15000,
+      "statsUrl": "",
+      "updateUrl": "",
+      "channelUrl": "",
+      "directUpdate": false
+    }
+  }
 }

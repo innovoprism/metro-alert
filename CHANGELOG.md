@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.5.0 (2026-11-19)
+- **Smarter ETA:** each stop-to-stop run follows a realistic speed profile (accelerate, cruise up to ~80 km/h, brake), so slow and fast parts of the ride no longer throw the estimate off. The app notices when the train stops at a station and when it departs, uses the real dwell time, and compares the time since departure with the profile to see whether this train is running late or early.
+- **Waiting for the train:** when you start on the platform, the ETA includes the expected wait (Metro trains every 3-10 min depending on the hour, from the RTA timetable).
+- **Learns from all riders:** every ride uploads its measured stop-to-stop times (anonymous) to the Metro Alert server. Times are learned separately for weekdays/weekends and time of day (early, morning peak, midday, evening peak, evening, night), and the app uses them instead of the timetable once at least 3 rides have been measured.
+- **Own server:** user counts (total, daily/weekly/monthly active per platform, new users, app versions), trips and alarms are counted on your own server (Cloudflare Worker + database), with a stats page at /stats. The server also hosts the web app.
+- **In-app updates:** the apps check for new versions. Phone apps download new versions over the air and use them on the next start; when a release needs a new app binary, Android offers the APK download and iPhone shows how to reinstall. The web app offers a one-tap reload.
+- **Map no longer gets stuck:** the map doesn't move under your fingers while you drag or pinch-zoom, follow-me works in the phone apps before you press Start, and heading-up no longer jitters when standing still.
+- Requires reinstalling the phone apps once (new update component). After this, most updates arrive automatically.
+
 ## v1.4.0 (2026-11-19)
 - **Timetable ETA:** arrival time is estimated from the RTA timetable (stop-to-stop times including dwell at each station), the live distance to the next stop and your current speed. It learns from the ride: if the train runs late or early, the rest of the estimate adjusts. Shows the minutes left, the arrival clock time and a countdown to the next stop.
 - **Works underground:** when GPS drops, the ETA keeps counting on the timetable and the alarm still rings on time ("GPS lost, by the RTA timetable...").

@@ -125,6 +125,13 @@
   @keyframes flash { 50% { background: #9d001d; } }
   @keyframes shake { 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
 
+  .upd { position: fixed; left: 10px; right: 10px; top: calc(64px + var(--safe-top)); z-index: 1400; background: #0067B1; color: #fff; border-radius: 14px; padding: 10px 10px 10px 14px; display: none; align-items: center; gap: 8px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+  .upd.on { display: flex; }
+  .upd span { flex: 1; }
+  .upd button { border: 0; border-radius: 10px; padding: 8px 12px; font-weight: 700; cursor: pointer; }
+  #updGo { background: #fff; color: #0067B1; }
+  #updX { background: transparent; color: #fff; padding: 8px; }
+  .ver a { color: inherit; text-decoration: underline; cursor: pointer; }
   .toast { position: fixed; left: 50%; top: calc(70px + var(--safe-top)); transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 1500; opacity: 0; transition: opacity .3s; pointer-events: none; max-width: 90%; text-align: center; }
   .toast.show { opacity: 1; }
 
@@ -259,6 +266,7 @@
   <button id="dismiss">I'm getting off ✓</button>
 </div>
 <div class="toast" id="toast"></div>
+<div class="upd" id="upd" role="status"><span id="updText"></span><button id="updGo"></button><button id="updX" aria-label="Later">✕</button></div>
 
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="vendor/leaflet-rotate.js"></script>
@@ -280,25 +288,33 @@
   const platform = isNative ? CapX.Capacitor.getPlatform() : 'web';
   const AlarmVibe = isNative ? plugin('AlarmVibe') : null;   // native (Android + iOS): non-stop vibration + alarm sound, also in background
 
-  // ================= Usage statistics (anonymous) =================
-  // Counts app opens, first installs, trips and alarms per platform (web / android / ios)
-  // in GoatCounter. No names, no locations, no device IDs are sent.
-  const GC_CODE = ((window.METRO_ALERT_CONFIG || {}).goatcounter || '').trim();
+  // ================= Server: usage statistics + learned timings (anonymous) =================
+  // Each install gets a random id (no name, phone number or location is ever sent).
+  const CFG = window.METRO_ALERT_CONFIG || {};
   const APP_VER = window.APP_VERSION || 'dev';
-  function gcHit(path, title, isEvent) {
-    if (!GC_CODE) return;
-    try {
-      const q = new URLSearchParams({ p: path, t: title, e: isEvent ? 'true' : 'false', r: '',
-        s: `${screen.width},${screen.height},${devicePixelRatio || 1}`, rnd: Math.random().toString(36).slice(2) });
-      fetch(`https://${GC_CODE}.goatcounter.com/count?${q}`, { mode: 'no-cors', keepalive: true, credentials: 'omit' }).catch(() => {});
-    } catch {}
+  const API = (CFG.api || (platform === 'web' && location.protocol === 'https:' && !/github\.io$/.test(location.hostname) ? location.origin : '')).replace(/\/$/, '');
+  function apiCall(path, body) {
+    if (!API) return Promise.resolve(null);
+    const opt = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true } : {};
+    return fetch(API + path, opt).then(r => (r.ok ? r.json() : null)).catch(() => null);
   }
-  function track(name) { gcHit(`${name}/${platform}`, `${name} (${platform})`, true); }
+  function installId() {
+    let id = null;
+    try { id = localStorage.getItem('ma_install_id'); } catch {}
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); }));
+      try { localStorage.setItem('ma_install_id', id); } catch {}
+    }
+    return id;
+  }
+  let nativeVer = '';
+  function track(name) { apiCall('/api/event', { id: installId(), platform, name }); }
   function trackOpen() {
-    gcHit(`/open/${platform}`, `Metro Alert ${platform} v${APP_VER}`, false);
-    try {
-      if (!localStorage.getItem('ma_installed')) { localStorage.setItem('ma_installed', '1'); track('install'); }
-    } catch {}
+    let first = false;
+    try { first = !localStorage.getItem('ma_installed'); localStorage.setItem('ma_installed', '1'); } catch {}
+    apiCall('/api/hello', { id: installId(), platform, version: APP_VER, native: nativeVer });
+    if (first) track('install');
   }
 
   const store = {
@@ -419,12 +435,25 @@
     const sheetTop = $('sheet').getBoundingClientRect().top || size.y;
     return L.point(size.x / 2, (top + Math.min(sheetTop, size.y)) / 2);
   }
+  // While a finger is on the map (drag, pinch-zoom) we never move the map ourselves,
+  // otherwise the follow animation fights the gesture and the map feels stuck.
+  let gestureUntil = 0, lastCenter = 0;
+  const mapEl = document.getElementById('map');
+  mapEl.addEventListener('touchstart', () => { gestureUntil = Infinity; }, { passive: true });
+  mapEl.addEventListener('touchend', e => { if (!e.touches.length) gestureUntil = Date.now() + 600; }, { passive: true });
+  mapEl.addEventListener('wheel', () => { gestureUntil = Date.now() + 800; }, { passive: true });
+  map.on('zoomend', () => { if (S.follow && Date.now() > gestureUntil) centerOnMe(false); });
   function centerOnMe(animate) {
     if (!S.me) return;
+    if (Date.now() < gestureUntil) return;
+    // one smooth pan at a time: skip if the last pan is still running
+    if (animate && Date.now() - lastCenter < 700) animate = false;
+    lastCenter = Date.now();
     const userPt = map.latLngToContainerPoint([S.me.lat, S.me.lng]);
     const shift = map.getSize().divideBy(2).subtract(visibleCenterPoint());
     const target = map.containerPointToLatLng(userPt.add(shift));
-    map.panTo(target, { animate: !!animate, duration: 0.6, noMoveStart: true });
+    if (map.getCenter().distanceTo(target) < 2) return;
+    map.panTo(target, { animate: !!animate, duration: 0.5, easeLinearity: 0.5, noMoveStart: true });
   }
   // Zoom + centre in one synchronous step (overlapping animations used to cancel the centring)
   function focusOnMe(z) {
@@ -450,16 +479,19 @@
   let headAnchor = null;
   function updateHeading(lat, lng, gpsHeading, speed) {
     let h = null;
-    if (gpsHeading != null && Number.isFinite(gpsHeading) && (speed == null || speed > 1)) h = gpsHeading;
-    else if (headAnchor && haversine(headAnchor, { lat, lng }) > 20) h = bearingDeg(headAnchor, { lat, lng });
-    if (!headAnchor || haversine(headAnchor, { lat, lng }) > 20) headAnchor = { lat, lng };
+    // GPS heading is noise when standing still: only trust it while really moving (> 2 m/s)
+    if (gpsHeading != null && Number.isFinite(gpsHeading) && gpsHeading >= 0 && speed != null && speed > 2) h = gpsHeading;
+    else if (headAnchor && haversine(headAnchor, { lat, lng }) > 30) h = bearingDeg(headAnchor, { lat, lng });
+    if (!headAnchor || haversine(headAnchor, { lat, lng }) > 30) headAnchor = { lat, lng };
     if (h == null) return;
-    if (S.heading != null) { const diff = ((h - S.heading + 540) % 360) - 180; if (Math.abs(diff) < 4) return; }
+    if (S.heading != null) { const diff = ((h - S.heading + 540) % 360) - 180; if (Math.abs(diff) < 10) return; }
     S.heading = h;
     applyOrientation();
   }
   function applyOrientation() {
     const target = S.orient === 'heading' && S.heading != null ? S.heading : 0;
+    if (Date.now() < gestureUntil) return;    // don't rotate under the user's fingers
+    map.stop();
     map.setBearing(-target);   // leaflet-rotate turns the map clockwise for positive values
     $('needle').style.transform = `rotate(${-target}deg)`;
     $('compassLbl').textContent = S.orient === 'heading' ? 'HEAD' : 'N↑';
@@ -506,11 +538,13 @@
     if (!d || !S.T) return null;
     if (d.kind === 'metro') {
       const m = lineById(d.line); if (!m) return null;
-      return { list: m.stops.map(i => ({ name: S.T.stations[i].name, lat: S.T.stations[i].lat, lng: S.T.stations[i].lng })), secs: m.secs, fixedDir: false, trig: 300 };
+      return { list: m.stops.map(i => ({ name: S.T.stations[i].name, lat: S.T.stations[i].lat, lng: S.T.stations[i].lng })), secs: m.secs, fixedDir: false, trig: 300,
+        mode: 'M', line: m.name.startsWith('Green') ? 'Green' : 'Red', dwell: 30, accel: 1.0, platform: 140 };
     }
     if (d.kind === 'bus') {
       const r = routeByN(d.route); if (!r || !r.dirs[d.dir]) return null;
-      return { list: r.dirs[d.dir].stops.map(i => ({ name: S.T.busStops[i][0], lat: S.T.busStops[i][1], lng: S.T.busStops[i][2] })), secs: r.dirs[d.dir].secs, fixedDir: true, trig: 120 };
+      return { list: r.dirs[d.dir].stops.map(i => ({ name: S.T.busStops[i][0], lat: S.T.busStops[i][1], lng: S.T.busStops[i][2] })), secs: r.dirs[d.dir].secs, fixedDir: true, trig: 120,
+        mode: 'B' + r.n, line: null, dwell: 15, accel: 0.8, platform: 45 };
     }
     return null;
   }
@@ -826,6 +860,7 @@
   }
   function fireAlarm(title, msg) {
     if ($('alarm').classList.contains('on')) return;
+    if (S.tracking) flushSamples();
     const isBus = S.dest && (S.dest.kind === 'bus' || S.dest.kind === 'stop');
     $('alarmIcon').textContent = isBus ? '🚌' : '🚇';
     $('alarmTitle').textContent = title || 'Your stop is next!';
@@ -914,7 +949,10 @@
 
   let wakeLock = null;
   async function keepAwake() { try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
-  document.addEventListener('visibilitychange', () => { if (S.tracking && document.visibilityState === 'visible') keepAwake(); });
+  document.addEventListener('visibilitychange', () => {
+    if (S.tracking && document.visibilityState === 'visible') keepAwake();
+    if (S.tracking && document.visibilityState === 'hidden') flushSamples();
+  });
 
   // ================= Tracking =================
   function routeProgress(me) {
@@ -936,45 +974,152 @@
     return { next, nextName: L_[next].name, togo: Math.abs(dIdx - next), atNext: haversine(me, L_[next]) };
   }
 
-  // ================= Timetable ETA =================
-  // RTA timetable seconds from stop k to stop k+1 (running time + dwell time at stop k)
-  const segSec = k => { const s = S._route && S._route.secs; return (s && s[k]) || 90; };
-  const schedBetween = (a, b) => { let t = 0; for (let k = Math.min(a, b); k < Math.max(a, b); k++) t += segSec(k); return t; };
+  // ================= ETA v2 =================
+  // For every stop-to-stop segment we know (a) the RTA timetable time and, when available,
+  // (b) the time learned from real rides of all app users at this time of day.
+  // Each segment = dwell at the "from" station + running time. Running time follows a
+  // realistic speed profile: accelerate -> cruise -> brake, so 80 km/h on the open line and
+  // 5 km/h while braking are both expected and don't throw the estimate off.
   const travelDir = next => (S._route.fixedDir ? 1 : (Math.sign(S.dest.idx - next) || S._dir || 1));
-
-  // ETA = live time to the next stop (its distance ÷ current speed, or the timetable when stopped/slow)
-  //     + timetable time for the remaining stops, scaled by how late/early this ride has been so far.
-  function estimateRouteEta(P, avg) {
-    const R = S._route, d = S.dest.idx, next = P.next, dir = travelDir(next);
-    const prev = Math.min(Math.max(next - dir, 0), R.list.length - 1);
-    const seg = prev === next ? 0 : segSec(Math.min(prev, next));
-    const full = prev === next ? 1 : Math.max(50, haversine(R.list[prev], R.list[next]));
-    const toNext = haversine(S.me, R.list[next]);
-    const sched = seg * Math.min(1, toNext / full) * S._delay;
-    const tNext = avg > 3 ? Math.min(toNext / avg, Math.max(sched * 2, 30)) : sched;
-    return { tNext, total: tNext + schedBetween(next, d) * S._delay };
+  const clampIdx = i => Math.min(Math.max(i, 0), S._route.list.length - 1);
+  const DUBAI = () => new Date(Date.now() + 4 * 3600e3);       // RTA runs on Dubai time
+  function timeBucket(t = DUBAI()) {
+    const d = t.getUTCDay(), h = t.getUTCHours();
+    const dt = d === 0 || d === 6 ? 'we' : 'wd';                 // UAE weekend: Sat + Sun
+    const band = h < 5 ? 'n' : h < 7 ? 'e' : h < 10 ? 'am' : h < 16 ? 'md' : h < 20 ? 'pm' : 'ev';
+    return dt + '-' + band;
   }
-  // Learn the delay factor: compare each finished stop-to-stop time with the timetable
-  function learnDelay(P, now) {
-    if (S._lastNext != null && P.next !== S._lastNext) {
-      const old = S._lastNext, dir = Math.sign(P.next - old);
-      if (S._lastNextAt && Math.abs(P.next - old) === 1) {
-        const k = Math.min(old - dir, old);
-        if (k >= 0 && k < S._route.list.length - 1) {
-          const r = (now - S._lastNextAt) / 1000 / segSec(k);
-          if (r > 0.4 && r < 3) S._delay = Math.min(1.6, Math.max(0.8, S._delay * 0.6 + r * 0.4));
-        }
+  // learned timings for the current time bucket, cached for 6 h
+  let learned = {};
+  async function loadLearned() {
+    const b = timeBucket();
+    const cached = store.get('learned_' + b, null);
+    if (cached) learned = cached.segments || {};
+    if (cached && Date.now() - cached.at < 6 * 3600e3) return;
+    const r = await apiCall('/api/timings?b=' + b);
+    if (r && r.segments) { learned = r.segments; store.set('learned_' + b, { at: Date.now(), segments: r.segments }); }
+  }
+  const segKey = (from, to) => `${S._route.mode}|${S._route.list[from].name}|${S._route.list[to].name}`;
+  // {run, dwell} for travelling from stop `from` to the neighbouring stop `to`
+  function segModel(from, to) {
+    const R = S._route, k = Math.min(from, to);
+    const tt = (R.secs && R.secs[k]) || 90;                     // timetable, includes dwell
+    const D = R.dwell;
+    let run = Math.max(25, tt - D), dwell = D, src = 'timetable';
+    const L = learned[segKey(from, to)];
+    if (L && L[2] >= 3) { run = L[0]; if (L[1] != null) dwell = L[1]; src = 'learned'; }
+    return { run, dwell, src };
+  }
+  // speed profile for a segment of length L metres run in T seconds (accel = brake = a m/s²)
+  function profile(L, T, a) {
+    T = Math.max(T, 2 * Math.sqrt(L / a) + 1);
+    const v = a * (T - Math.sqrt(Math.max(0, T * T - 4 * L / a))) / 2;   // cruise speed
+    const da = v * v / (2 * a), ta = v / a;
+    return {
+      v, T,
+      timeAt(x) {                                                  // seconds after departure to reach x metres
+        x = Math.min(Math.max(x, 0), L);
+        if (x < da) return Math.sqrt(2 * x / a);
+        if (x <= L - da) return ta + (x - da) / v;
+        return T - Math.sqrt(2 * (L - x) / a);
       }
-      S._lastNextAt = now;
+    };
+  }
+  // where the train is: dwelling at a station, or running between two stations (with departure time)
+  function updateStation(now, avg, acc) {
+    const R = S._route; let i = 0, nd = Infinity;
+    R.list.forEach((p, k) => { const d = haversine(S.me, p); if (d < nd) { nd = d; i = k; } });
+    const st = S._stn, near = nd < R.platform + Math.min(acc || 0, 60);
+    if (near && avg < 1.5) {
+      if (st.state !== 'dwell' || st.i !== i) {
+        if (st.state === 'run' && Math.abs(st.from - i) === 1) finishSegment(st.from, i, (now - st.departedAt) / 1000, st.dwell, st.at);
+        S._stn = { state: 'dwell', i, arrivedAt: now, gotDeparture: st.state === 'run' || st.state === 'dwell' };
+        if (st.state === 'none') S._stn.atStart = true;            // trip started on the platform
+      }
+    } else if (st.state === 'dwell' && (nd > R.platform + 60 || (avg > 3 && i !== st.i))) {
+      // we notice the departure only some metres out: backdate it along the acceleration curve
+      const dFrom = haversine(S.me, R.list[st.i]), back = Math.min(Math.sqrt(2 * dFrom / R.accel), (now - st.arrivedAt) / 1000);
+      const departedAt = now - back * 1000;
+      const dwell = st.atStart ? null : (departedAt - st.arrivedAt) / 1000;
+      S._stn = { state: 'run', from: st.i, departedAt, dwell, at: timeBucket() };
+      S._boarded = true;
     }
-    S._lastNext = P.next;
+  }
+  // a finished segment: correct this ride's pace, and share the measurement (anonymous)
+  function finishSegment(from, to, run, dwell, bucket) {
+    if (!(run >= 10 && run < 1800)) return;
+    const m = segModel(from, to);
+    const r = run / m.run;
+    if (r > 0.4 && r < 3) S._delay = Math.min(1.8, Math.max(0.75, S._delay * 0.5 + r * 0.5));
+    S._samples.push({ k: segKey(from, to), b: bucket, run: Math.round(run), dwell: dwell != null && dwell < 600 ? Math.round(dwell) : null });
+    if (S._samples.length >= 5) flushSamples();
+  }
+  function flushSamples() {
+    if (!S._samples || !S._samples.length) return;
+    apiCall('/api/samples', { id: installId(), samples: S._samples.splice(0, 50) });
+  }
+  // expected wait for the next Metro train when the trip starts on the platform
+  function platformWait() {
+    const R = S._route; if (!R.line || !S.T.headways || S._boarded) return 0;
+    const t = DUBAI(), dt = (t.getUTCDay() === 0 || t.getUTCDay() === 6) ? 'we' : 'wd';
+    const hw = (S.T.headways[R.line] || {})[dt]; const h = hw && hw[t.getUTCHours()];
+    if (!h) return 0;
+    const st = S._stn, waited = st.state === 'dwell' && st.atStart ? (Date.now() - st.arrivedAt) / 1000 : 0;
+    return Math.max(0, h * 60 / 2 - waited);
+  }
+
+  function estimateRouteEta(P, now) {
+    const R = S._route, d = S.dest.idx, next = P.next, dir = travelDir(next);
+    const prev = clampIdx(next - dir), st = S._stn;
+    let tNext = 0;
+    // Still braking into `prev` (it counts as "reached" 300 m early): time to arrive there + its dwell
+    const before = clampIdx(prev - dir);
+    if (prev !== next && st.state === 'run' && st.from === before && before !== prev) {
+      const ma = segModel(before, prev), mb = segModel(prev, next);
+      const L = Math.max(80, haversine(R.list[before], R.list[prev]));
+      const x = L - Math.min(L, haversine(S.me, R.list[prev]));
+      const pr = profile(L, ma.run, R.accel);
+      let rem = pr.T - pr.timeAt(x);
+      const elapsed = (now - st.departedAt) / 1000, expected = pr.timeAt(x);
+      if (expected > 10) rem *= 1 + (Math.min(2.5, Math.max(0.6, elapsed / expected)) - 1) * Math.min(1, x / L);
+      tNext = Math.max(0, rem) + mb.dwell + mb.run * S._delay;
+    } else if (prev !== next) {
+      const m = segModel(prev, next);
+      if (st.state === 'dwell' && st.i === prev) {
+        // standing at the station: rest of the dwell (or the wait for a train), then the run
+        const left = st.atStart ? platformWait() + m.dwell * 0.5 : Math.max(5, m.dwell - (now - st.arrivedAt) / 1000);
+        tNext = left + m.run * S._delay;
+      } else {
+        const L = Math.max(80, haversine(R.list[prev], R.list[next]));
+        const x = L - Math.min(L, haversine(S.me, R.list[next]));
+        const pr = profile(L, m.run, R.accel);
+        let rem = pr.T - pr.timeAt(x);
+        if (st.state === 'run' && st.from === prev) {
+          // compare with the departure: how far behind/ahead of the profile is this train right now?
+          const elapsed = (now - st.departedAt) / 1000, expected = pr.timeAt(x);
+          if (expected > 10) {
+            const r = Math.min(2.5, Math.max(0.6, elapsed / expected));
+            rem *= 1 + (r - 1) * Math.min(1, x / L);               // trust it more the further we are
+          }
+        } else rem *= S._delay;
+        tNext = Math.max(0, rem);
+      }
+    }
+    let rest = 0;
+    for (let i = next; i !== d && i >= 0 && i < R.list.length; i += dir) {
+      const m = segModel(i, i + dir);
+      rest += (m.dwell + m.run) * S._delay;
+    }
+    return { tNext, total: tNext + rest };
   }
   // Seconds before arrival at which the "N stops early" alarm should ring (for the timetable backup)
   function earlyLeadSecs() {
     const R = S._route, d = S.dest.idx, k = S._k || 0;
     if (!R || !k) return 45;
     const dir = travelDir(S._lastNext != null ? S._lastNext : d - 1);
-    return schedBetween(Math.min(Math.max(d - k * dir, 0), R.list.length - 1), d) * S._delay + 10;
+    let t = 10;
+    for (let i = clampIdx(d - k * dir); i !== d; i += dir) { const m = segModel(i, i + dir); t += (m.dwell + m.run) * S._delay; }
+    return t;
   }
   const fmtDur = sec => sec < 45 ? '<1 min' : sec < 3600 ? Math.round(sec / 60) + ' min' : Math.floor(sec / 3600) + ' h ' + Math.round((sec % 3600) / 60) + ' min';
   const fmtMs = sec => { sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
@@ -986,7 +1131,7 @@
     const E = S._eta; if (!S.tracking || !E) return;
     const now = Date.now(), rem = Math.max(0, (E.at - now) / 1000);
     $('eta').textContent = fmtDur(rem);
-    $('etaLbl').textContent = 'ETA · ' + fmtClock(E.at);
+    $('etaLbl').textContent = 'ETA · ' + fmtClock(E.at) + (E.wait > 30 ? ' · incl. wait' : '');
     if (E.nextAt && E.nextName) $('nextIn').textContent = E.nextAt > now ? 'in ' + fmtMs((E.nextAt - now) / 1000) : 'arriving';
     const stale = S.lastFix && now - S.lastFix > 25000;
     if (stale && S._route && !S.alarmed && rem <= earlyLeadSecs()) {
@@ -1025,9 +1170,12 @@
     const P = routeProgress(S.me);
     $('nextIn').textContent = '';
     if (P && !P.off && !P.past) {
-      learnDelay(P, now);
-      const E = estimateRouteEta(P, avg);
-      S._eta = { at: now + E.total * 1000, nextAt: now + E.tNext * 1000, nextName: P.nextName };
+      const vNow = S.speeds.length ? Math.min(avg, S.speeds[S.speeds.length - 1]) : avg;   // react fast to a stop
+      updateStation(now, vNow, acc);
+      S._lastNext = P.next;
+      const E = estimateRouteEta(P, now);
+      S._eta = { at: now + E.total * 1000, nextAt: now + E.tNext * 1000, nextName: P.nextName,
+        wait: S._stn.state === 'dwell' && S._stn.atStart && !S._boarded && S._route.line ? platformWait() : 0 };
       scheduleBackupAlarm(S._eta.at - earlyLeadSecs() * 1000 + 20000);
       $('togo').textContent = P.togo === 0 ? '🎯' : P.togo + 1;
       $('nextLbl').textContent = P.togo === 0 ? 'Next stop is yours' : `Next stop · ${P.togo + 1} stops to go`;
@@ -1073,10 +1221,12 @@
   let staleTimer = null;
   async function startTracking() {
     if (!S.dest) return toast('Choose a stop first');
+    stopPassiveWatch();
     unlockAudio();
     await setupNotifications();
     Object.assign(S, { tracking: true, alarmed: false, warned: false, startDist: null, speeds: [], prev: null, armed: {}, _dir: null,
-      _delay: 1, _eta: null, _lastNext: null, _lastNextAt: 0 });
+      _delay: 1, _eta: null, _lastNext: null, _stn: { state: 'none' }, _samples: [], _boarded: false });
+    loadLearned();
     $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA';
     clearInterval(etaTicker); etaTicker = setInterval(renderEta, 1000);
     track('trip-' + (S.dest.kind || 'pin'));
@@ -1118,7 +1268,8 @@
   }
   async function stopTracking(msg) {
     S.tracking = false;
-    clearInterval(etaTicker); cancelBackupAlarm();
+    clearInterval(etaTicker); cancelBackupAlarm(); flushSamples();
+    setTimeout(startPassiveWatch, 500);
     clearInterval(staleTimer);
     if (S.watchId != null) {
       if (isNative && BgGeo) { try { await BgGeo.removeWatcher({ id: S.watchId }); } catch {} }
@@ -1139,15 +1290,31 @@
   // ================= Locate =================
   // light GPS watch while not tracking, so "follow" keeps you centred when you just look at the map
   let passiveId = null;
-  function startPassiveWatch() {
-    if (passiveId != null || isNative || !('geolocation' in navigator)) return;
-    passiveId = navigator.geolocation.watchPosition(p => {
-      if (S.tracking) return;
-      S.me = { lat: p.coords.latitude, lng: p.coords.longitude };
-      updateHeading(S.me.lat, S.me.lng, p.coords.heading, p.coords.speed);
-      drawMe(S.me.lat, S.me.lng, p.coords.accuracy);
-      if (S.follow) centerOnMe(true);
-    }, () => {}, { enableHighAccuracy: true, maximumAge: 5000 });
+  function onPassiveFix(lat, lng, acc, heading, speed) {
+    if (S.tracking) return;
+    S.me = { lat, lng };
+    updateHeading(lat, lng, heading, speed);
+    drawMe(lat, lng, acc);
+    if (S.follow) centerOnMe(true);
+  }
+  async function startPassiveWatch() {
+    if (passiveId != null) return;
+    if (isNative && BgGeo) {   // phone apps: foreground-only watcher, so the map follows you before Start too
+      passiveId = 'pending';
+      try {
+        passiveId = await BgGeo.addWatcher({ requestPermissions: true, stale: false, distanceFilter: 5 },
+          (loc, err) => { if (!err && loc) onPassiveFix(loc.latitude, loc.longitude, loc.accuracy, loc.bearing, loc.speed); });
+      } catch { passiveId = null; }
+      return;
+    }
+    if (!('geolocation' in navigator)) return;
+    passiveId = navigator.geolocation.watchPosition(p => onPassiveFix(p.coords.latitude, p.coords.longitude, p.coords.accuracy, p.coords.heading, p.coords.speed),
+      () => {}, { enableHighAccuracy: true, maximumAge: 5000 });
+  }
+  function stopPassiveWatch() {
+    const id = passiveId; passiveId = null;
+    if (id == null || id === 'pending') return;
+    if (isNative && BgGeo) BgGeo.removeWatcher({ id }).catch(() => {}); else navigator.geolocation.clearWatch(id);
   }
   function gotFirstFix(lat, lng, acc, fly) {
     S.me = { lat, lng };
@@ -1184,6 +1351,60 @@
   let toastTimer;
   function toast(t) { $('toast').textContent = t; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600); }
 
+  // ================= Updates =================
+  // Web: reload to get the new version. Phone apps: new screens/logic are downloaded over the air
+  // and applied on the next start; when a release needs a new app binary, offer the download.
+  const Updater = isNative ? plugin('CapacitorUpdater') : null;
+  const cmpVer = (a, b) => {
+    const x = String(a).split('.').map(Number), y = String(b).split('.').map(Number);
+    for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) - (y[i] || 0);
+    return 0;
+  };
+  function parseRelease(rel) {
+    const v = String(rel.tag_name || '').replace(/^v/, '');
+    const asset = re => ((rel.assets || []).find(a => re.test(a.name)) || {}).browser_download_url;
+    const m = /native-min:\s*([\d.]+)/.exec(rel.body || '');
+    return { version: v, nativeMin: m ? m[1] : v, web: asset(/-web\.zip$/), apk: asset(/\.apk$/), ipa: asset(/\.ipa$/), page: rel.html_url };
+  }
+  async function latestRelease() {
+    const r = await apiCall('/api/version');
+    if (r && r.version) return r;
+    if (!CFG.githubRepo) return null;
+    try { return parseRelease(await (await fetch(`https://api.github.com/repos/${CFG.githubRepo}/releases/latest`)).json()); } catch { return null; }
+  }
+  const openUrl = url => { if (isNative) location.href = url; else window.open(url, '_blank', 'noopener'); };
+  function showUpdate(text, btn, fn) {
+    $('updText').textContent = text; $('updGo').textContent = btn;
+    $('updGo').onclick = () => { $('upd').classList.remove('on'); fn(); };
+    $('upd').classList.add('on');
+  }
+  $('updX').onclick = () => $('upd').classList.remove('on');
+  let updBusy = false;
+  async function checkUpdate(manual) {
+    if (updBusy) return;
+    if (!manual && Date.now() - store.get('updCheck', 0) < 3 * 3600e3) return;
+    updBusy = true; store.set('updCheck', Date.now());
+    try {
+      const L = await latestRelease();
+      if (!L || !L.version) { if (manual) toast('Could not check for updates (offline?)'); return; }
+      if (cmpVer(L.version, VERSION) <= 0) { if (manual) toast(`You have the latest version (v${VERSION})`); return; }
+      if (!isNative) { showUpdate(`Metro Alert v${L.version} is available`, 'Update', () => location.reload()); return; }
+      if (nativeVer && cmpVer(L.nativeMin, nativeVer) > 0) {
+        if (platform === 'android' && L.apk) showUpdate(`Metro Alert v${L.version} is available`, 'Download', () => openUrl(L.apk));
+        else showUpdate(`Metro Alert v${L.version}: reinstall the new app with Sideloadly`, 'Details', () => openUrl(L.page));
+        return;
+      }
+      if (!Updater || !L.web) return;
+      if (manual) toast(`Downloading v${L.version}…`);
+      const b = await Updater.download({ url: L.web, version: L.version });
+      await Updater.next({ id: b.id });                  // used automatically on the next start
+      track('update');
+      showUpdate(`Update v${L.version} is ready`, S.tracking ? 'OK' : 'Restart', () => { if (!S.tracking) Updater.set({ id: b.id }); });
+    } catch (e) {
+      if (manual) toast('Update failed. Try again later.');
+    } finally { updBusy = false; }
+  }
+
   // ================= Init =================
   const VERSION = window.APP_VERSION || 'dev';
   $('ver').textContent = `Metro Alert v${VERSION}`;
@@ -1195,15 +1416,25 @@
       showTab('pin'); renderSaved(); return;
     }
     const d = S.T.busFeedDate;
-    $('ver').textContent = `Metro Alert v${VERSION} · RTA data ${S.T.generated}`;
+    $('ver').innerHTML = `Metro Alert v${esc(VERSION)} · RTA data ${esc(S.T.generated)} · <a id="chkUpd">Check for updates</a>`;
+    $('chkUpd').onclick = () => checkUpdate(true);
     $('busNote').textContent = `${S.T.bus.length} RTA bus routes · stops from RTA timetable data${d ? ' (' + d.slice(0, 4) + ')' : ''}. Some routes may have changed since, so check with RTA S'hail if unsure.`;
     renderLineChips(); renderStations(); renderBus(); drawMetro(); renderSaved();
     if (S.dest) setDest(S.dest); else fitLine(currentLine(), false);
     if (!S.dest) showTab('metro');
     locateOnce(!S.dest);
+    setTimeout(startPassiveWatch, 1500);
   }
+  (async () => {
+    if (Updater) {
+      try { await Updater.notifyAppReady(); } catch {}            // this version started fine: keep it
+      try { nativeVer = (await Updater.getBuiltinVersion()).version || ''; } catch {}
+    }
+    trackOpen();
+    setTimeout(() => checkUpdate(false), 4000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !S.tracking) checkUpdate(false); });
+  })();
   init();
-  trackOpen();
 
   if (!isNative && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!isNative && !window.isSecureContext) status('GPS needs HTTPS (or localhost). Host this on an https:// address.', true);

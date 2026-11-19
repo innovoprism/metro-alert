@@ -1,5 +1,5 @@
 // Offline support: app shell is cached per version; map tiles are cached as you view them.
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const SHELL = 'metro-alert-shell-' + VERSION;
 const TILES = 'metro-alert-tiles-v1';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon.svg',
@@ -19,7 +19,7 @@ self.addEventListener('fetch', e => {
       const net = fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }).catch(() => hit);
       return hit || net;
     }));
-  } else if (url.origin === location.origin) {
+  } else if (url.origin === location.origin && !url.pathname.startsWith('/api/') && url.pathname !== '/stats') {
     e.respondWith(fetch(e.request).then(r => { caches.open(SHELL).then(c => c.put(e.request, r.clone())); return r; })
       .catch(() => caches.match(e.request).then(r => r || caches.match('index.html'))));
   }
