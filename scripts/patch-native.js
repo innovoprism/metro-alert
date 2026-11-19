@@ -45,8 +45,11 @@ public class MainActivity extends BridgeActivity {
   console.log('Added AlarmVibePlugin (continuous vibration) and registered it in MainActivity');
   const rawDir = path.join(root, 'android/app/src/main/res/raw');
   fs.mkdirSync(rawDir, { recursive: true });
-  fs.copyFileSync(path.join(root, 'www/alarm.wav'), path.join(rawDir, 'alarm.wav'));
-  console.log('Added res/raw/alarm.wav (notification sound)');
+  // notification sounds must live in res/raw (lowercase names): www/tunes/chime.wav -> res/raw/tune_chime.wav
+  for (const f of fs.readdirSync(path.join(root, 'www/tunes')).filter(f => f.endsWith('.wav'))) {
+    fs.copyFileSync(path.join(root, 'www/tunes', f), path.join(rawDir, 'tune_' + f));
+  }
+  console.log('Added alarm tunes to res/raw (notification sounds)');
 } else if (target === 'ios') {
   const f = path.join(root, 'ios/App/App/Info.plist');
   let x = fs.readFileSync(f, 'utf8');

@@ -1,7 +1,9 @@
 package com.metroalert.app;
 
 import android.content.Context;
+import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
+import android.media.MediaPlayer;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
 import android.net.Uri;
@@ -27,6 +29,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "AlarmVibe")
 public class AlarmVibePlugin extends Plugin {
     private Ringtone ringtone;
+    private MediaPlayer player;
     private PowerManager.WakeLock wakeLock;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable autoStop = this::stopAll;
@@ -50,6 +53,7 @@ public class AlarmVibePlugin extends Plugin {
     @PluginMethod
     public void start(PluginCall call) {
         boolean sound = call.getBoolean("sound", true);
+        String tune = call.getString("tune", "system");   // "system" = phone's alarm tone, else a file in the app (e.g. tunes/chime.wav)
         int maxSeconds = call.getInt("maxSeconds", 300);
         stopAll();
 
@@ -68,6 +72,23 @@ public class AlarmVibePlugin extends Plugin {
             }
         }
 
+        if (sound && tune != null && !"system".equals(tune)) {
+            try {
+                AssetFileDescriptor fd = getContext().getAssets().openFd("public/" + tune);
+                player = new MediaPlayer();
+                player.setAudioAttributes(new AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build());
+                player.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
+                fd.close();
+                player.setLooping(true);
+                player.prepare();
+                player.start();
+                sound = false;          // custom tune is playing, skip the system tone
+            } catch (Exception e) {
+                if (player != null) { try { player.release(); } catch (Exception ignored) { } player = null; }
+            }
+        }
         if (sound) {
             try {
                 Uri uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM);
@@ -106,6 +127,7 @@ public class AlarmVibePlugin extends Plugin {
         Vibrator v = vibrator();
         if (v != null) v.cancel();
         if (ringtone != null) { try { ringtone.stop(); } catch (Exception ignored) { } ringtone = null; }
+        if (player != null) { try { player.stop(); player.release(); } catch (Exception ignored) { } player = null; }
         if (wakeLock != null && wakeLock.isHeld()) { try { wakeLock.release(); } catch (Exception ignored) { } }
         wakeLock = null;
     }

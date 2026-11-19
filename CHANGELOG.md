@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.6.0 (2026-11-19)
+- **Fix: the alarm kept going after "I'm getting off".** Tapping it right after the alarm started could leave the native alarm running; alarm notifications also kept playing their sound. Now everything stops at once: vibration, sound, repeat reminders and notifications on screen.
+- **"I'm getting off" button on the notification**, so you can stop the alarm without opening the app.
+- **Alarm tunes:** Classic beeps, Chime, Digital watch, Rising alert, Marimba, Pulse (and the phone's own alarm tone on Android), with a ▶ preview. The heads-up uses a short chime.
+- **Settings screen** (⚙ button on the map): account, alert mode, tune, default wake-up and alarm distance, heads-up, map orientation, follow-me, saved stops, version and **Check for updates**.
+- **Accounts (optional):** sign up / log in with email and password. Your saved stops are kept on your account and appear on all your phones. Profile shows your trips, alarms and saved stops; you can change your name, log out or delete the account.
+- Needs a one-time reinstall (new native alarm player). Updates after this arrive in the app.
+
 ## v1.5.1 (2026-11-19)
 - The apps are now connected to the Metro Alert server (metro-alert.innovoprism.workers.dev): user counts, learned train timings and update checks go through it.
 - Arrives as an in-app update for v1.5.0 (no reinstall needed).

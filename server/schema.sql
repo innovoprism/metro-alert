@@ -30,3 +30,21 @@ CREATE TABLE IF NOT EXISTS seg (
   updated TEXT NOT NULL,
   PRIMARY KEY (key, bucket)
 );
+
+-- Accounts (optional for app users). Passwords are stored only as salted PBKDF2-SHA256 hashes.
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  pass TEXT NOT NULL, salt TEXT NOT NULL,
+  created TEXT NOT NULL,
+  trips INTEGER NOT NULL DEFAULT 0, alarms INTEGER NOT NULL DEFAULT 0,
+  saved TEXT,                      -- saved stops (JSON), synced between the user's devices
+  settings TEXT,                   -- app settings (JSON)
+  fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, created TEXT NOT NULL, expires INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
+CREATE TABLE IF NOT EXISTS install_user (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL);

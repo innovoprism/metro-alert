@@ -125,6 +125,46 @@
   @keyframes flash { 50% { background: #9d001d; } }
   @keyframes shake { 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
 
+  .panel { position: fixed; inset: 0; z-index: 1700; background: var(--bg); display: none; flex-direction: column; }
+  .panel.on { display: flex; }
+  .phead { display: flex; align-items: center; justify-content: space-between; padding: calc(12px + var(--safe-top)) 16px 12px; background: #fff; border-bottom: 1px solid var(--line); }
+  .phead b { font-size: 18px; }
+  .pclose { border: 0; background: var(--bg); width: 38px; height: 38px; border-radius: 12px; font-size: 16px; cursor: pointer; }
+  .pbody { overflow-y: auto; padding: 14px 16px calc(24px + var(--safe-bottom)); max-width: 640px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .sec { background: #fff; border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+  .sec h3 { margin: 0 0 8px; font-size: 15px; }
+  .lbl { font-size: 13px; font-weight: 600; margin: 12px 0 6px; display: flex; justify-content: space-between; }
+  .lbl small { font-weight: 400; color: var(--muted); }
+  .lbl output { color: var(--red); font-weight: 700; }
+  .tunes { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .tune { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+  .tune:last-child { border-bottom: 0; }
+  .tune input { accent-color: var(--red); width: 18px; height: 18px; }
+  .tune span { flex: 1; }
+  .tune button { border: 0; background: var(--bg); border-radius: 10px; width: 36px; height: 32px; cursor: pointer; }
+  .row2 { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; }
+  .row2 span:last-child { color: var(--muted); }
+  .pbtn { width: 100%; height: 48px; border: 0; border-radius: 14px; background: var(--red); color: #fff; font-size: 16px; font-weight: 700; margin-top: 10px; cursor: pointer; }
+  .pbtn:disabled { opacity: .6; }
+  .lbtn { width: 100%; height: 44px; border: 1px solid var(--line); border-radius: 14px; background: #fff; font-size: 15px; font-weight: 600; margin-top: 8px; cursor: pointer; }
+  .lbtn.danger { color: #b91c1c; border-color: #fecaca; }
+  .fine { font-size: 12px; color: var(--muted); margin: 8px 0 0; line-height: 1.45; }
+  .fld { display: block; margin-top: 12px; }
+  .fld span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+  .fld input { width: 100%; box-sizing: border-box; height: 46px; border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; font-size: 16px; background: #fff; }
+  .fld input:focus { outline: 2px solid var(--red); border-color: transparent; }
+  .err { color: #b91c1c; font-size: 13px; min-height: 18px; margin-top: 8px; }
+  .acct { display: flex; align-items: center; gap: 12px; }
+  .acct .t { flex: 1; min-width: 0; } .acct b { display: block; } .acct small { color: var(--muted); font-size: 13px; }
+  .avatar { display: grid; place-items: center; width: 100%; height: 100%; }
+  .avatar.on { background: var(--red); color: #fff; border-radius: 12px; font-weight: 800; font-size: 15px; }
+  .avatar.big { width: 56px; height: 56px; border-radius: 18px; background: var(--red); color: #fff; font-size: 22px; font-weight: 800; flex: none; }
+  .avatar.mid { width: 44px; height: 44px; border-radius: 14px; background: var(--red); color: #fff; font-weight: 800; flex: none; }
+  .pcard { display: flex; gap: 12px; align-items: center; background: #fff; border-radius: 16px; padding: 14px; }
+  .pcard b { font-size: 18px; display: block; } .pcard small { color: var(--muted); }
+  .stats2 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .stats2 div { background: #fff; border-radius: 14px; padding: 12px; text-align: center; }
+  .stats2 b { display: block; font-size: 22px; } .stats2 span { font-size: 12px; color: var(--muted); }
   .upd { position: fixed; left: 10px; right: 10px; top: calc(64px + var(--safe-top)); z-index: 1400; background: #0067B1; color: #fff; border-radius: 14px; padding: 10px 10px 10px 14px; display: none; align-items: center; gap: 8px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
   .upd.on { display: flex; }
   .upd span { flex: 1; }
@@ -170,6 +210,85 @@
   <button class="iconbtn compass" id="compass" title="North up / Heading up" aria-label="Map orientation">
     <svg viewBox="0 0 24 24" id="needle"><path d="M12 2 16 12H8z" fill="#E4002B"/><path d="M12 22 8 12h8z" fill="#9ca3af"/></svg><span id="compassLbl">N↑</span>
   </button>
+  <button class="iconbtn" id="openSettings" title="Settings & profile" aria-label="Settings and profile">
+    <span class="avatar" id="avatarBtn"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span>
+  </button>
+</div>
+
+<!-- ===== Settings ===== -->
+<div class="panel" id="settings" role="dialog" aria-label="Settings">
+  <div class="phead"><b>Settings</b><button class="pclose" id="closeSettings" aria-label="Close">✕</button></div>
+  <div class="pbody">
+    <div class="sec" id="accountSec"></div>
+
+    <div class="sec">
+      <h3>Alarm</h3>
+      <div class="lbl">Alert</div>
+      <div class="seg" id="setAlert"><button data-m="sound">🔔 Vibrate + sound</button><button data-m="vibrate">📳 Vibrate only</button></div>
+      <div class="lbl">Alarm tune <small>(tap ▶ to listen)</small></div>
+      <div class="tunes" id="tuneList"></div>
+      <div class="lbl">Default wake-up</div>
+      <div class="seg" id="setEarly"><button data-k="2">2 stops early</button><button data-k="1">1 stop early</button><button data-k="0">On approach</button></div>
+      <div class="lbl"><span>Default alarm distance</span><output id="setRadiusOut"></output></div>
+      <input type="range" id="setRadius" min="150" max="3000" step="50">
+      <label class="toggle"><input type="checkbox" id="setHeadsup"> Heads-up buzz at 2× distance</label>
+    </div>
+
+    <div class="sec">
+      <h3>Map</h3>
+      <div class="lbl">Map orientation</div>
+      <div class="seg" id="setOrient"><button data-o="north">N↑ North up</button><button data-o="heading">➤ Direction of travel</button></div>
+      <label class="toggle"><input type="checkbox" id="setFollow"> Follow my location when I start a trip</label>
+    </div>
+
+    <div class="sec">
+      <h3>My data</h3>
+      <div class="row2"><span>Saved stops</span><span id="savedCount"></span></div>
+      <button class="lbtn" id="clearSaved">Clear saved stops</button>
+      <p class="fine">Usage is counted anonymously (a random id per install). Learned train timings are shared without any personal data. Your email is only used for your account.</p>
+    </div>
+
+    <div class="sec">
+      <h3>App</h3>
+      <div class="row2"><span>Version</span><span id="setVer"></span></div>
+      <div class="row2"><span>RTA data</span><span id="setData"></span></div>
+      <button class="pbtn" id="setCheckUpd">Check for updates</button>
+      <div class="fine" id="updStatus"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Login / sign up ===== -->
+<div class="panel" id="auth" role="dialog" aria-label="Account">
+  <div class="phead"><b id="authTitle">Log in</b><button class="pclose" id="closeAuth" aria-label="Close">✕</button></div>
+  <div class="pbody">
+    <div class="seg" id="authTabs"><button data-t="login">Log in</button><button data-t="signup">Sign up</button></div>
+    <form id="authForm" autocomplete="on">
+      <label class="fld" id="nameFld"><span>Name</span><input id="authName" autocomplete="name" maxlength="60"></label>
+      <label class="fld"><span>Email</span><input id="authEmail" type="email" autocomplete="email" inputmode="email" required></label>
+      <label class="fld"><span>Password</span><input id="authPass" type="password" autocomplete="current-password" minlength="8" required></label>
+      <div class="err" id="authErr"></div>
+      <button class="pbtn" id="authGo" type="submit">Log in</button>
+      <p class="fine" id="authNote"></p>
+    </form>
+  </div>
+</div>
+
+<!-- ===== Profile ===== -->
+<div class="panel" id="profile" role="dialog" aria-label="Profile">
+  <div class="phead"><b>Profile</b><button class="pclose" id="closeProfile" aria-label="Close">✕</button></div>
+  <div class="pbody">
+    <div class="pcard"><div class="avatar big" id="profAvatar"></div><div><b id="profName"></b><small id="profEmail"></small></div></div>
+    <div class="stats2">
+      <div><b id="profTrips">0</b><span>Trips</span></div><div><b id="profAlarms">0</b><span>Alarms</span></div><div><b id="profSaved">0</b><span>Saved stops</span></div>
+    </div>
+    <div class="fine" id="profSince"></div>
+    <label class="fld"><span>Name</span><input id="profNameIn" maxlength="60"></label>
+    <div class="err" id="profErr"></div>
+    <button class="pbtn" id="profSave">Save</button>
+    <button class="lbtn" id="profLogout">Log out</button>
+    <button class="lbtn danger" id="profDelete">Delete account</button>
+  </div>
 </div>
 
 <section class="sheet" id="sheet">
@@ -293,10 +412,25 @@
   const CFG = window.METRO_ALERT_CONFIG || {};
   const APP_VER = window.APP_VERSION || 'dev';
   const API = (CFG.api || (platform === 'web' && location.protocol === 'https:' && !/github\.io$/.test(location.hostname) ? location.origin : '')).replace(/\/$/, '');
-  function apiCall(path, body) {
+  const authToken = () => { try { return localStorage.getItem('ma_token') || ''; } catch { return ''; } };
+  function apiCall(path, body, method) {
     if (!API) return Promise.resolve(null);
-    const opt = body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), keepalive: true } : {};
+    const headers = {};
+    if (authToken()) headers.Authorization = 'Bearer ' + authToken();
+    const opt = { method: method || (body ? 'POST' : 'GET'), headers };
+    if (body) { headers['Content-Type'] = 'application/json'; opt.body = JSON.stringify(body); opt.keepalive = true; }
     return fetch(API + path, opt).then(r => (r.ok ? r.json() : null)).catch(() => null);
+  }
+  // like apiCall, but returns {ok, status, data} so forms can show the server's message
+  async function apiForm(path, body, method) {
+    if (!API) return { ok: false, data: { error: 'No server configured.' } };
+    const headers = { 'Content-Type': 'application/json' };
+    if (authToken()) headers.Authorization = 'Bearer ' + authToken();
+    try {
+      const r = await fetch(API + path, { method: method || 'POST', headers, body: body ? JSON.stringify(body) : undefined });
+      let data = {}; try { data = await r.json(); } catch {}
+      return { ok: r.ok, status: r.status, data };
+    } catch { return { ok: false, data: { error: 'No connection. Check your internet and try again.' } }; }
   }
   function installId() {
     let id = null;
@@ -330,7 +464,9 @@
     radius: store.get('radius', 500),
     earlyK: store.get('earlyK', 1),
     headsup: store.get('headsup', true),
-    alertMode: store.get('alertMode', 'sound'),   // 'sound' = vibrate + sound, 'vibrate' = vibrate only
+    alertMode: store.get('alertMode', 'sound'),
+    tune: store.get('tune', 'classic'),
+    followOnStart: store.get('followOnStart', true),   // 'sound' = vibrate + sound, 'vibrate' = vibrate only
     _delay: 1, _eta: null,
     saved: store.get('saved', []),
     line: store.get('line', 'red-lp'),
@@ -722,7 +858,7 @@
         c.innerHTML = `<span>${p.kind === 'metro' ? '🚇' : p.kind === 'pin' ? '📍' : '🚌'}</span><span class="n"></span><span class="x" title="Remove">×</span>`;
         c.querySelector('.n').textContent = p.name + (p.kind === 'bus' ? ` (${p.route})` : '');
         c.onclick = e => {
-          if (e.target.classList.contains('x')) { S.saved.splice(i, 1); store.set('saved', S.saved); renderSaved(); updateSaveStar(); return; }
+          if (e.target.classList.contains('x')) { S.saved.splice(i, 1); saveSaved(); renderSaved(); updateSaveStar(); return; }
           setDest(p);
         };
         box.appendChild(c);
@@ -737,7 +873,7 @@
     if (!S.dest) return;
     if (isSaved()) { S.saved = S.saved.filter(p => !sameDest(p, S.dest)); toast('Removed from saved'); }
     else { S.saved.unshift({ ...S.dest }); S.saved = S.saved.slice(0, 12); toast('Saved ⭐'); }
-    store.set('saved', S.saved); renderSaved(); updateSaveStar();
+    saveSaved(); renderSaved(); updateSaveStar();
   };
 
   // ================= Universal search =================
@@ -822,15 +958,52 @@
     beep(1320, t + 0.6, 0.3);
   }
 
+  // ---- Alarm tunes ----
+  const TUNES = [
+    { id: 'classic', name: 'Classic beeps' }, { id: 'chime', name: 'Chime' }, { id: 'digital', name: 'Digital watch' },
+    { id: 'rising', name: 'Rising alert' }, { id: 'marimba', name: 'Marimba' }, { id: 'pulse', name: 'Pulse' }
+  ];
+  if (isAndroid) TUNES.push({ id: 'system', name: "Phone's alarm tone" });
+  if (!TUNES.some(t => t.id === S.tune)) S.tune = 'classic';
+  const tuneFile = (id = S.tune) => (id === 'system' ? 'system' : `tunes/${id}.wav`);
+  const tuneBuffers = {};
+  async function loadTune(id) {
+    if (tuneBuffers[id] || id === 'system' || !audioCtx) return tuneBuffers[id];
+    try { tuneBuffers[id] = await audioCtx.decodeAudioData(await (await fetch(tuneFile(id))).arrayBuffer()); } catch {}
+    return tuneBuffers[id];
+  }
+  let tuneSrc = null;
+  async function startTuneLoop(id = S.tune, loop = true) {
+    stopTuneLoop();
+    unlockAudio();
+    const buf = await loadTune(id === 'system' ? 'classic' : id);
+    if (!buf) { alarmBeeps(); alarmTimer = setInterval(alarmBeeps, 2200); return; }   // fallback
+    const src = audioCtx.createBufferSource(); src.buffer = buf; src.loop = loop;
+    src.connect(audioCtx.destination); src.start();
+    tuneSrc = src;
+  }
+  function stopTuneLoop() { if (tuneSrc) { try { tuneSrc.stop(); } catch {} tuneSrc = null; } }
+  // preview a tune for 4 s (settings), through the native player on phones so it sounds like the real alarm
+  let previewTimer = null;
+  function previewTune(id) {
+    clearTimeout(previewTimer);
+    if (AlarmVibe) { AlarmVibe.start({ sound: true, tune: tuneFile(id), maxSeconds: 4 }).catch(() => {}); previewTimer = setTimeout(() => AlarmVibe.stop().catch(() => {}), 4000); return; }
+    startTuneLoop(id, false); previewTimer = setTimeout(stopTuneLoop, 4000);
+  }
+
   // ---- Continuous wake-up vibration: runs non-stop until "I'm getting off" (max 5 min) ----
   let vibeTimer = null, nativeAlarm = false, wakeStop = null;
   const WAKE_MAX_MS = 5 * 60 * 1000;
+  let wakeGen = 0;                                   // bumps on every stop, so a late start can't resurrect the alarm
   async function startWakeVibration() {
     stopWakeVibration();
+    const gen = wakeGen;
     nativeAlarm = false;
     if (AlarmVibe) {
-      try { await AlarmVibe.start({ sound: S.alertMode === 'sound', maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
+      try { await AlarmVibe.start({ sound: S.alertMode === 'sound', tune: tuneFile(), maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
+      if (gen !== wakeGen) { AlarmVibe.stop().catch(() => {}); return; }   // dismissed while starting
     }
+    if (gen !== wakeGen) return;
     if (!nativeAlarm) {
       const pulse = () => {
         if (isNative && Haptics) Haptics.vibrate({ duration: 1200 }).catch(() => {});
@@ -842,7 +1015,9 @@
     wakeStop = setTimeout(stopWakeVibration, WAKE_MAX_MS);
   }
   function stopWakeVibration() {
+    wakeGen++;
     clearInterval(vibeTimer); vibeTimer = null;
+    stopTuneLoop();
     clearTimeout(wakeStop); wakeStop = null;
     if (AlarmVibe) AlarmVibe.stop().catch(() => {});
     if (navigator.vibrate) { try { navigator.vibrate(0); } catch {} }
@@ -868,9 +1043,9 @@
     $('alarm').classList.add('on');
     startWakeVibration().then(() => {
       // Android app: the phone's own alarm tone loops natively. Elsewhere: in-app beeps.
-      if (!nativeAlarm && S.alertMode === 'sound' && $('alarm').classList.contains('on')) { alarmBeeps(); alarmTimer = setInterval(alarmBeeps, 2200); }
+      if (!nativeAlarm && S.alertMode === 'sound' && $('alarm').classList.contains('on')) startTuneLoop();
     });
-    notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
+    if (document.visibilityState !== 'visible' || !isNative) notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
     repeatNotify((isBus ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent, $('alarmMsg').textContent);
     cancelBackupAlarm();
     track('alarm');
@@ -880,15 +1055,25 @@
     clearInterval(alarmTimer); alarmTimer = null;
     stopWakeVibration();
     cancelRepeatNotify();
+    cancelBackupAlarm();
+    // silence alarm notifications already on screen (their sound would otherwise keep playing)
+    if (isNative && LocalNotif) LocalNotif.removeAllDeliveredNotifications().catch(() => {});
   }
   $('dismiss').onclick = () => { stopAlarm(); if (S.tracking && S.alarmed) stopTracking('Arrived. Have a good day! 👋'); };
 
   // ================= Notifications =================
+  let notifListener = null;
   async function setupNotifications() {
     try {
       if (isNative && LocalNotif) {
         await LocalNotif.requestPermissions();
-        await LocalNotif.createChannel({ id: 'alarm-sound', name: 'Arrival alarm (sound + vibration)', importance: 5, vibration: true, visibility: 1, sound: 'alarm.wav' }).catch(() => {});
+        await LocalNotif.createChannel({ id: 'headsup', name: 'Heads-up (almost there)', importance: 4, vibration: true, visibility: 1, sound: 'tune_headsup.wav' }).catch(() => {});
+        for (const t of TUNES.filter(x => x.id !== 'system')) await LocalNotif.createChannel({ id: 'tune-' + t.id, name: `Arrival alarm – ${t.name}`, importance: 5, vibration: true, visibility: 1, sound: `tune_${t.id}.wav` }).catch(() => {});
+        await LocalNotif.registerActionTypes({ types: [{ id: 'ALARM', actions: [{ id: 'stop', title: "I'm getting off", foreground: true }] }] }).catch(() => {});
+        if (!notifListener) notifListener = LocalNotif.addListener('localNotificationActionPerformed', () => {
+          // either the button or a tap on the notification: open the app and stop the alarm
+          if ($('alarm').classList.contains('on')) $('dismiss').click(); else stopAlarm();
+        });
         await LocalNotif.createChannel({ id: 'alarm-vibe', name: 'Arrival alarm (vibration only)', importance: 5, vibration: true, visibility: 1 }).catch(() => {});
       } else if ('Notification' in window && Notification.permission === 'default') {
         await Notification.requestPermission();
@@ -899,8 +1084,10 @@
   const sndMode = () => S.alertMode === 'sound';
   // One native notification: alarm sound + vibration (or vibration only), shown even when the app is in the background
   function nativeNote(id, title, body, urgent, at) {
-    const n = { id, title, body, channelId: sndMode() ? 'alarm-sound' : 'alarm-vibe', autoCancel: true, ongoing: !!urgent };
-    if (sndMode()) n.sound = 'alarm.wav';
+    const t = S.tune === 'system' ? 'classic' : S.tune;
+    const n = { id, title, body, autoCancel: true };
+    if (!urgent) { n.channelId = sndMode() ? 'headsup' : 'alarm-vibe'; if (sndMode()) n.sound = isAndroid ? 'tune_headsup.wav' : 'tunes/headsup.wav'; }
+    else { n.channelId = sndMode() ? 'tune-' + t : 'alarm-vibe'; n.actionTypeId = 'ALARM'; if (sndMode()) n.sound = isAndroid ? `tune_${t}.wav` : `tunes/${t}.wav`; }
     if (urgent) n.interruptionLevel = 'active';
     if (at) n.schedule = { at: new Date(at), allowWhileIdle: true };
     return n;
@@ -1236,7 +1423,7 @@
     $('nextbox').style.display = S._route ? '' : 'none';
     drawDest();
     if (map.getZoom() < 15) map.setZoom(15);
-    setFollow(true); applyOrientation();
+    if (S.followOnStart) setFollow(true); applyOrientation();
     status('Getting your location…');
 
     if (isNative && BgGeo) {
@@ -1351,6 +1538,145 @@
   let toastTimer;
   function toast(t) { $('toast').textContent = t; $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2600); }
 
+  // ================= Account (optional) =================
+  let user = store.get('user', null);
+  const initials = n => (n || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
+  function saveSaved() {
+    store.set('saved', S.saved);
+    if (user && authToken()) apiCall('/api/me', { saved: S.saved }, 'PUT');
+  }
+  // merge this phone's saved stops with the account's (no duplicates), keep both in sync
+  function mergeSaved(remote) {
+    const all = [...S.saved];
+    (remote || []).forEach(r => { if (r && typeof r.lat === 'number' && !all.some(p => sameDest(p, r))) all.push(r); });
+    S.saved = all.slice(0, 30);
+    saveSaved(); renderSaved(); updateSaveStar();
+  }
+  function setUser(u, token) {
+    user = u;
+    store.set('user', u);
+    try { if (token) localStorage.setItem('ma_token', token); if (!u) localStorage.removeItem('ma_token'); } catch {}
+    const a = $('avatarBtn');
+    if (u) { a.dataset.icon = a.dataset.icon || a.innerHTML; a.textContent = initials(u.name); a.classList.add('on'); }
+    else if (a.dataset.icon) { a.innerHTML = a.dataset.icon; a.classList.remove('on'); }
+    renderAccountSec();
+  }
+  function renderAccountSec() {
+    const box = $('accountSec');
+    if (user) {
+      box.innerHTML = `<div class="acct"><div class="avatar mid">${esc(initials(user.name))}</div><div class="t"><b>${esc(user.name)}</b><small>${esc(user.email)}</small></div><button class="lbtn" style="width:auto;margin:0;padding:0 14px" id="openProfile">Profile</button></div>`;
+      $('openProfile').onclick = openProfile;
+    } else {
+      box.innerHTML = `<h3>Account</h3><p class="fine" style="margin-top:0">Log in to keep your saved stops on all your phones and see your trip history. The app works fine without an account.</p>
+        <div class="seg" style="margin-top:10px"><button id="goLogin">Log in</button><button id="goSignup" class="on">Sign up</button></div>`;
+      $('goLogin').onclick = () => openAuth('login');
+      $('goSignup').onclick = () => openAuth('signup');
+    }
+  }
+  let authMode = 'login';
+  function openAuth(mode) {
+    authMode = mode;
+    $('authTitle').textContent = mode === 'login' ? 'Log in' : 'Create account';
+    document.querySelectorAll('#authTabs button').forEach(b => b.classList.toggle('on', b.dataset.t === mode));
+    $('nameFld').style.display = mode === 'signup' ? '' : 'none';
+    $('authPass').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+    $('authGo').textContent = mode === 'login' ? 'Log in' : 'Sign up';
+    $('authNote').textContent = mode === 'signup' ? 'Password: at least 8 characters.' : '';
+    $('authErr').textContent = '';
+    $('auth').classList.add('on');
+  }
+  document.querySelectorAll('#authTabs button').forEach(b => b.onclick = () => openAuth(b.dataset.t));
+  $('closeAuth').onclick = () => $('auth').classList.remove('on');
+  $('authForm').onsubmit = async e => {
+    e.preventDefault();
+    if (!API) { $('authErr').textContent = 'Accounts need the Metro Alert server.'; return; }
+    const body = { email: $('authEmail').value.trim(), password: $('authPass').value, id: installId() };
+    if (authMode === 'signup') body.name = $('authName').value.trim();
+    $('authGo').disabled = true; $('authErr').textContent = '';
+    const r = await apiForm('/api/auth/' + authMode, body);
+    $('authGo').disabled = false;
+    if (!r.ok || !r.data.token) { $('authErr').textContent = r.data.error || 'Something went wrong. Try again.'; return; }
+    $('authPass').value = '';
+    setUser(r.data.user, r.data.token);
+    mergeSaved(r.data.user.saved);
+    $('auth').classList.remove('on');
+    toast(authMode === 'signup' ? `Welcome, ${r.data.user.name}!` : `Logged in as ${r.data.user.name}`);
+  };
+  async function refreshUser() {
+    if (!user || !authToken()) return;
+    const r = await apiForm('/api/me', null, 'GET');
+    if (r.ok && r.data.user) { setUser(r.data.user); mergeSaved(r.data.user.saved); }
+    else if (r.status === 401) { setUser(null); toast('Please log in again'); }
+  }
+  function openProfile() {
+    if (!user) return openAuth('login');
+    $('profAvatar').textContent = initials(user.name);
+    $('profName').textContent = user.name; $('profEmail').textContent = user.email;
+    $('profTrips').textContent = user.trips || 0; $('profAlarms').textContent = user.alarms || 0; $('profSaved').textContent = S.saved.length;
+    $('profSince').textContent = user.created ? 'Member since ' + user.created : '';
+    $('profNameIn').value = user.name; $('profErr').textContent = '';
+    $('profile').classList.add('on');
+    refreshUser().then(() => { if (user) { $('profTrips').textContent = user.trips || 0; $('profAlarms').textContent = user.alarms || 0; } });
+  }
+  $('closeProfile').onclick = () => $('profile').classList.remove('on');
+  $('profSave').onclick = async () => {
+    const r = await apiForm('/api/me', { name: $('profNameIn').value.trim() }, 'PUT');
+    if (!r.ok) { $('profErr').textContent = r.data.error || 'Could not save.'; return; }
+    setUser(r.data.user); $('profName').textContent = user.name; $('profAvatar').textContent = initials(user.name); toast('Saved');
+  };
+  $('profLogout').onclick = async () => {
+    await apiForm('/api/auth/logout', {});
+    setUser(null); $('profile').classList.remove('on'); toast('Logged out');
+  };
+  // two-step confirm inside the page (dialogs like confirm() are not reliable in the apps)
+  let delArmed = 0;
+  $('profDelete').onclick = async () => {
+    if (Date.now() - delArmed > 5000) { delArmed = Date.now(); $('profDelete').textContent = 'Tap again to delete your account permanently'; return; }
+    const r = await apiForm('/api/me', null, 'DELETE');
+    $('profDelete').textContent = 'Delete account';
+    if (!r.ok) { $('profErr').textContent = r.data.error || 'Could not delete.'; return; }
+    setUser(null); $('profile').classList.remove('on'); toast('Your account was deleted');
+  };
+
+  // ================= Settings =================
+  function renderSettings() {
+    document.querySelectorAll('#setAlert button').forEach(b => b.classList.toggle('on', b.dataset.m === S.alertMode));
+    document.querySelectorAll('#setEarly button').forEach(b => b.classList.toggle('on', +b.dataset.k === S.earlyK));
+    document.querySelectorAll('#setOrient button').forEach(b => b.classList.toggle('on', b.dataset.o === S.orient));
+    $('setRadius').value = S.radius; $('setRadiusOut').textContent = fmtM(S.radius);
+    $('setHeadsup').checked = S.headsup; $('setFollow').checked = S.followOnStart;
+    $('tuneList').innerHTML = '';
+    TUNES.forEach(t => {
+      const row = document.createElement('label'); row.className = 'tune';
+      row.innerHTML = `<input type="radio" name="tune" ${t.id === S.tune ? 'checked' : ''}><span>${esc(t.name)}</span><button type="button" aria-label="Play ${esc(t.name)}">▶</button>`;
+      row.querySelector('input').onchange = () => { S.tune = t.id; store.set('tune', t.id); previewTune(t.id); };
+      row.querySelector('button').onclick = e => { e.preventDefault(); unlockAudio(); previewTune(t.id); };
+      $('tuneList').appendChild(row);
+    });
+    $('savedCount').textContent = S.saved.length;
+    $('setVer').textContent = 'v' + VERSION + (nativeVer && nativeVer !== VERSION ? ` (app ${nativeVer})` : '');
+    $('setData').textContent = S.T ? S.T.generated : '–';
+    renderAccountSec();
+  }
+  $('openSettings').onclick = () => { renderSettings(); $('settings').classList.add('on'); refreshUser(); };
+  $('closeSettings').onclick = () => { $('settings').classList.remove('on'); stopTuneLoop(); };
+  document.querySelectorAll('#setAlert button').forEach(b => b.onclick = () => { S.alertMode = b.dataset.m; store.set('alertMode', S.alertMode); showAlertMode(); renderSettings(); });
+  document.querySelectorAll('#setEarly button').forEach(b => b.onclick = () => { setEarly(+b.dataset.k); renderSettings(); });
+  document.querySelectorAll('#setOrient button').forEach(b => b.onclick = () => { S.orient = b.dataset.o; store.set('orient', S.orient); applyOrientation(); renderSettings(); });
+  $('setRadius').oninput = () => { $('radius').value = $('setRadius').value; $('radius').dispatchEvent(new Event('input')); $('setRadiusOut').textContent = fmtM(S.radius); };
+  $('setHeadsup').onchange = () => { $('headsup').checked = $('setHeadsup').checked; $('headsup').dispatchEvent(new Event('change')); };
+  $('setFollow').onchange = () => { S.followOnStart = $('setFollow').checked; store.set('followOnStart', S.followOnStart); };
+  let clearArmed = 0;
+  $('clearSaved').onclick = () => {
+    if (Date.now() - clearArmed > 5000) { clearArmed = Date.now(); $('clearSaved').textContent = 'Tap again to clear all saved stops'; return; }
+    S.saved = []; saveSaved(); renderSaved(); updateSaveStar(); $('clearSaved').textContent = 'Clear saved stops'; renderSettings(); toast('Saved stops cleared');
+  };
+  $('setCheckUpd').onclick = async () => {
+    $('setCheckUpd').disabled = true; $('updStatus').textContent = 'Checking…';
+    $('updStatus').textContent = await checkUpdate(true) || '';
+    $('setCheckUpd').disabled = false;
+  };
+
   // ================= Updates =================
   // Web: reload to get the new version. Phone apps: new screens/logic are downloaded over the air
   // and applied on the next start; when a release needs a new app binary, offer the download.
@@ -1381,27 +1707,29 @@
   $('updX').onclick = () => $('upd').classList.remove('on');
   let updBusy = false;
   async function checkUpdate(manual) {
-    if (updBusy) return;
+    if (updBusy) return 'Already checking…';
     if (!manual && Date.now() - store.get('updCheck', 0) < 3 * 3600e3) return;
     updBusy = true; store.set('updCheck', Date.now());
+    const say = m => { if (manual) toast(m); return m; };
     try {
       const L = await latestRelease();
-      if (!L || !L.version) { if (manual) toast('Could not check for updates (offline?)'); return; }
-      if (cmpVer(L.version, VERSION) <= 0) { if (manual) toast(`You have the latest version (v${VERSION})`); return; }
-      if (!isNative) { showUpdate(`Metro Alert v${L.version} is available`, 'Update', () => location.reload()); return; }
+      if (!L || !L.version) return say('Could not check for updates (offline?)');
+      if (cmpVer(L.version, VERSION) <= 0) return say(`You have the latest version (v${VERSION})`);
+      if (!isNative) { showUpdate(`Metro Alert v${L.version} is available`, 'Update', () => location.reload()); return `v${L.version} is available. Tap Update at the top.`; }
       if (nativeVer && cmpVer(L.nativeMin, nativeVer) > 0) {
         if (platform === 'android' && L.apk) showUpdate(`Metro Alert v${L.version} is available`, 'Download', () => openUrl(L.apk));
         else showUpdate(`Metro Alert v${L.version}: reinstall the new app with Sideloadly`, 'Details', () => openUrl(L.page));
-        return;
+        return `v${L.version} needs a new app install (see the banner at the top).`;
       }
-      if (!Updater || !L.web) return;
+      if (!Updater || !L.web) return say(`v${L.version} is available`);
       if (manual) toast(`Downloading v${L.version}…`);
       const b = await Updater.download({ url: L.web, version: L.version });
       await Updater.next({ id: b.id });                  // used automatically on the next start
       track('update');
       showUpdate(`Update v${L.version} is ready`, S.tracking ? 'OK' : 'Restart', () => { if (!S.tracking) Updater.set({ id: b.id }); });
+      return `v${L.version} downloaded. It starts the next time you open the app (or tap Restart).`;
     } catch (e) {
-      if (manual) toast('Update failed. Try again later.');
+      return say('Update failed. Try again later.');
     } finally { updBusy = false; }
   }
 
@@ -1430,7 +1758,9 @@
       try { await Updater.notifyAppReady(); } catch {}            // this version started fine: keep it
       try { nativeVer = (await Updater.getBuiltinVersion()).version || ''; } catch {}
     }
+    setUser(user);
     trackOpen();
+    setTimeout(refreshUser, 2500);
     setTimeout(() => checkUpdate(false), 4000);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !S.tracking) checkUpdate(false); });
   })();

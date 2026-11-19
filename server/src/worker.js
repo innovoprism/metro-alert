@@ -6,13 +6,17 @@
 //   POST /api/samples      measured stop-to-stop times {id, samples:[{k, b, run, dwell}]}
 //   GET  /api/timings?b=   learned times for a time-of-day bucket
 //   GET  /api/version      latest release (for in-app updates)
+//   POST /api/auth/signup  {email, password, name, id}   -> {token, user}
+//   POST /api/auth/login   {email, password, id}         -> {token, user}
+//   POST /api/auth/logout  (Authorization: Bearer token)
+//   GET/PUT/DELETE /api/me profile (name, saved stops, settings), delete account
 //   GET  /stats?key=...    usage dashboard (STATS_KEY secret)
 //   GET  /api/stats?key=   the same as JSON
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
   'Access-Control-Max-Age': '86400',
 };
 const PLATFORMS = new Set(['web', 'android', 'ios']);
@@ -31,8 +35,12 @@ export default {
     const p = url.pathname;
     if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
     try {
-      if (p === '/api/hello' && req.method === 'POST') return await hello(await req.json(), env, ctx);
-      if (p === '/api/event' && req.method === 'POST') return await event(await req.json(), env);
+      if (p === '/api/hello' && req.method === 'POST') return await hello(await req.json(), env, ctx, await sessionUser(req, env));
+      if (p === '/api/event' && req.method === 'POST') return await event(await req.json(), env, await sessionUser(req, env));
+      if (p === '/api/auth/signup' && req.method === 'POST') return await signup(await req.json(), env);
+      if (p === '/api/auth/login' && req.method === 'POST') return await login(await req.json(), env);
+      if (p === '/api/auth/logout' && req.method === 'POST') return await logout(req, env);
+      if (p === '/api/me') return await me(req, env);
       if (p === '/api/samples' && req.method === 'POST') return await samples(await req.json(), env);
       if (p === '/api/timings') return await timings(url, env);
       if (p === '/api/version') return await version(env, ctx);
@@ -51,7 +59,7 @@ function authorised(url, env) {
 }
 
 // ---------------------------------------------------------------- users
-async function hello(b, env, ctx) {
+async function hello(b, env, ctx, user) {
   const id = str(b.id, 40), platform = str(b.platform, 10);
   if (!ID_RE.test(id) || !PLATFORMS.has(platform)) return json({ error: 'bad request' }, 400);
   const day = dubaiDay(), version = str(b.version, 16), native = str(b.native, 16);
@@ -61,18 +69,115 @@ async function hello(b, env, ctx) {
                     ON CONFLICT(id) DO UPDATE SET platform = ?2, version = ?3, native = ?4, last_seen = ?5, opens = opens + 1`)
       .bind(id, platform, version, native, day),
     env.DB.prepare('INSERT OR IGNORE INTO active (day, id, platform) VALUES (?1, ?2, ?3)').bind(day, id, platform),
+    ...(user ? [env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(id, user.id)] : []),
   ]);
   // keep the daily-active table small (> 400 days old is not needed)
   if (Math.random() < 0.01) ctx.waitUntil(env.DB.prepare('DELETE FROM active WHERE day < ?1').bind(dubaiDay(400)).run());
   return json({ ok: true });
 }
 
-async function event(b, env) {
+async function event(b, env, user) {
   const platform = str(b.platform, 10), name = str(b.name, 20);
   if (!PLATFORMS.has(platform) || !EVENTS.has(name)) return json({ error: 'bad request' }, 400);
   await env.DB.prepare(`INSERT INTO events (day, platform, name, n) VALUES (?1, ?2, ?3, 1)
                         ON CONFLICT(day, platform, name) DO UPDATE SET n = n + 1`).bind(dubaiDay(), platform, name).run();
+  if (user && name.startsWith('trip-')) await env.DB.prepare('UPDATE users SET trips = trips + 1 WHERE id = ?1').bind(user.id).run();
+  if (user && name === 'alarm') await env.DB.prepare('UPDATE users SET alarms = alarms + 1 WHERE id = ?1').bind(user.id).run();
   return json({ ok: true });
+}
+
+// ---------------------------------------------------------------- accounts
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
+const enc = new TextEncoder();
+const hex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+const unhex = h => new Uint8Array(h.match(/../g).map(x => parseInt(x, 16)));
+async function hashPassword(password, saltHex) {
+  const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
+  return hex(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: unhex(saltHex), iterations: 100000 }, key, 256));
+}
+const sha256 = async t => hex(await crypto.subtle.digest('SHA-256', enc.encode(t)));
+function safeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return r === 0;
+}
+function publicUser(u) {
+  let saved = []; try { saved = JSON.parse(u.saved || '[]'); } catch {}
+  let settings = {}; try { settings = JSON.parse(u.settings || '{}'); } catch {}
+  return { name: u.name, email: u.email, created: u.created, trips: u.trips, alarms: u.alarms, saved, settings };
+}
+async function newSession(env, userId) {
+  const token = hex(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, created, expires) VALUES (?1, ?2, ?3, ?4)')
+    .bind(await sha256(token), userId, dubaiDay(), Date.now() + 180 * 86400e3).run();
+  return token;
+}
+async function sessionUser(req, env) {
+  const m = /^Bearer ([0-9a-f]{64})$/.exec(req.headers.get('Authorization') || '');
+  if (!m) return null;
+  const row = await env.DB.prepare(`SELECT u.* , s.token_hash th FROM sessions s JOIN users u ON u.id = s.user_id
+                                    WHERE s.token_hash = ?1 AND s.expires > ?2`).bind(await sha256(m[1]), Date.now()).first();
+  return row || null;
+}
+async function signup(b, env) {
+  const email = str(b.email, 254).trim().toLowerCase(), name = str(b.name, 60).trim(), password = typeof b.password === 'string' ? b.password : '';
+  if (!EMAIL_RE.test(email)) return json({ error: 'Please enter a valid email address.' }, 400);
+  if (!name) return json({ error: 'Please enter your name.' }, 400);
+  if (password.length < 8 || password.length > 200) return json({ error: 'Password must be at least 8 characters.' }, 400);
+  const exists = await env.DB.prepare('SELECT id FROM users WHERE email = ?1').bind(email).first();
+  if (exists) return json({ error: 'An account with this email already exists. Please log in.' }, 409);
+  const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+  const r = await env.DB.prepare('INSERT INTO users (email, name, pass, salt, created) VALUES (?1, ?2, ?3, ?4, ?5)')
+    .bind(email, name, await hashPassword(password, salt), salt, dubaiDay()).run();
+  const id = r.meta.last_row_id;
+  if (ID_RE.test(str(b.id, 40))) await env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(b.id, id).run();
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?1').bind(id).first();
+  return json({ token: await newSession(env, id), user: publicUser(user) });
+}
+async function login(b, env) {
+  const email = str(b.email, 254).trim().toLowerCase(), password = typeof b.password === 'string' ? b.password : '';
+  const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?1').bind(email).first();
+  const bad = () => json({ error: 'Wrong email or password.' }, 401);
+  if (!u) { await hashPassword(password || 'x', '00'.repeat(16)); return bad(); }   // same timing as a real check
+  if (u.locked_until > Date.now()) return json({ error: 'Too many attempts. Try again in 15 minutes.' }, 429);
+  if (!safeEqual(await hashPassword(password, u.salt), u.pass)) {
+    const fails = u.fails + 1;
+    await env.DB.prepare('UPDATE users SET fails = ?2, locked_until = ?3 WHERE id = ?1')
+      .bind(u.id, fails >= 10 ? 0 : fails, fails >= 10 ? Date.now() + 15 * 60e3 : 0).run();
+    return bad();
+  }
+  await env.DB.prepare('UPDATE users SET fails = 0, locked_until = 0 WHERE id = ?1').bind(u.id).run();
+  if (ID_RE.test(str(b.id, 40))) await env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(b.id, u.id).run();
+  return json({ token: await newSession(env, u.id), user: publicUser(u) });
+}
+async function logout(req, env) {
+  const u = await sessionUser(req, env);
+  if (u) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?1').bind(u.th).run();
+  return json({ ok: true });
+}
+async function me(req, env) {
+  const u = await sessionUser(req, env);
+  if (!u) return json({ error: 'Please log in again.' }, 401);
+  if (req.method === 'GET') return json({ user: publicUser(u) });
+  if (req.method === 'DELETE') {
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?1').bind(u.id),
+      env.DB.prepare('DELETE FROM install_user WHERE user_id = ?1').bind(u.id),
+      env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(u.id),
+    ]);
+    return json({ ok: true });
+  }
+  if (req.method === 'PUT') {
+    const b = await req.json();
+    const name = b.name != null ? str(b.name, 60).trim() : u.name;
+    const saved = Array.isArray(b.saved) ? JSON.stringify(b.saved.slice(0, 30)) : u.saved;
+    const settings = b.settings && typeof b.settings === 'object' ? JSON.stringify(b.settings) : u.settings;
+    if (!name) return json({ error: 'Name cannot be empty.' }, 400);
+    if ((saved || '').length > 20000 || (settings || '').length > 4000) return json({ error: 'Too much data.' }, 400);
+    await env.DB.prepare('UPDATE users SET name = ?2, saved = ?3, settings = ?4 WHERE id = ?1').bind(u.id, name, saved, settings).run();
+    return json({ user: publicUser({ ...u, name, saved, settings }) });
+  }
+  return json({ error: 'method not allowed' }, 405);
 }
 
 // ---------------------------------------------------------------- learned train timings
@@ -153,6 +258,7 @@ async function stats(env) {
     q('SELECT name, platform, SUM(n) n FROM events WHERE day >= ?1 GROUP BY name, platform', d30),
     q('SELECT COUNT(*) segments, COALESCE(SUM(n), 0) samples FROM seg WHERE n >= 3'),
   ]);
+  const acc = (await q('SELECT COUNT(*) total, SUM(CASE WHEN created >= ?1 THEN 1 ELSE 0 END) new30 FROM users', d30))[0];
   const byP = rows => Object.fromEntries(['web', 'android', 'ios'].map(p => [p, (rows.find(r => r.platform === p) || {}).n || 0]));
   const days = [];
   for (let i = 29; i >= 0; i--) {
@@ -161,7 +267,7 @@ async function stats(env) {
       active: byP(actDays.filter(r => r.day === d)), new: byP(newDays.filter(r => r.day === d)) });
   }
   return { today: d0, users: byP(total), activeToday: byP(act1), active7: byP(act7), active30: byP(act30),
-    days, versions, events: ev, learned: learned[0] };
+    days, versions, events: ev, learned: learned[0], accounts: { total: acc.total || 0, new30: acc.new30 || 0 } };
 }
 
 const html = (body, status = 200) => new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
@@ -197,7 +303,7 @@ function dashboard(s) {
   const card = (label, o, note) => `<div class="card"><small>${label}</small><b>${sum(o)}</b><div class="split">${split(o)}</div>${note ? `<small>${note}</small>` : ''}</div>`;
   return page('Metro Alert – usage', `
 <h1>Metro Alert – usage</h1><div class="muted">Counted on the server. Dubai date ${esc(s.today)}. Anonymous: one random id per app install.</div>
-<div class="grid">${card('Total users (installs)', s.users)}${card('Active today', s.activeToday)}${card('Active last 7 days', s.active7)}${card('Active last 30 days', s.active30)}</div>
+<div class="grid"><div class="card"><small>Registered accounts</small><b>${s.accounts.total}</b><small>${s.accounts.new30} signed up in the last 30 days</small></div>${card('Total users (installs)', s.users)}${card('Active today', s.activeToday)}${card('Active last 7 days', s.active7)}${card('Active last 30 days', s.active30)}</div>
 <h2>Daily active users, last 30 days</h2><div class="bars">${bars}</div>
 <div class="muted" style="margin-top:6px">${['web', 'android', 'ios'].map(p => `<span class="dot" style="background:${COL[p]}"></span>${p}`).join('')}</div>
 <h2>Trips and alarms, last 30 days</h2><table><tr><th>Event</th><th>Platform</th><th>Count</th></tr>${evRows}</table>

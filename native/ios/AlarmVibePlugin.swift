@@ -30,7 +30,10 @@ public class AlarmVibePlugin: CAPPlugin, CAPBridgedPlugin {
             let session = AVAudioSession.sharedInstance()
             try? session.setCategory(.playback, mode: .default, options: sound ? [.duckOthers] : [.mixWithOthers])
             try? session.setActive(true)
-            if let url = Bundle.main.url(forResource: "alarm", withExtension: "wav", subdirectory: "public") {
+            // tune = file inside the app's web folder, e.g. "tunes/chime.wav"
+            let tune = call.getString("tune") ?? "tunes/classic.wav"
+            let url = Bundle.main.resourceURL?.appendingPathComponent("public").appendingPathComponent(tune)
+            if let url = url, FileManager.default.fileExists(atPath: url.path) {
                 self.player = try? AVAudioPlayer(contentsOf: url)
                 self.player?.numberOfLoops = -1
                 // vibrate-only: play silently so iOS keeps the app (and the vibration) running in the background

@@ -102,6 +102,12 @@ One-time setup:
 
 Stats: open `https://metro-alert.<you>.workers.dev/stats` and enter your STATS_KEY.
 
+## Accounts
+Optional email + password accounts (server `/api/auth/*`, `/api/me`). Passwords are stored as salted PBKDF2-SHA256 hashes; 10 wrong passwords lock the account for 15 minutes. Saved stops sync between devices. There is no password-reset email yet (it needs an email-sending service). Collecting emails means you should publish a short privacy policy before listing the app in a store.
+
+## Alarm tunes
+`scripts/make-tunes.py` generates the tunes in `www/tunes/` (original synthesized sounds). Android copies them to `res/raw` for notification channels; iOS plays them from the app bundle.
+
 ## Updates
 - **Web:** the app checks for a new version and offers a reload.
 - **Phone apps:** new screens/logic (`www/`) are downloaded over the air and used on the next start. A release that changes native code must raise `nativeMin` in `package.json`; installed apps then offer the new APK (Android) or ask to reinstall (iPhone).
