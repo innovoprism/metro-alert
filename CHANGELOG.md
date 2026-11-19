@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.5.1 (2026-11-19)
+- The apps are now connected to the Metro Alert server (metro-alert.innovoprism.workers.dev): user counts, learned train timings and update checks go through it.
+- Arrives as an in-app update for v1.5.0 (no reinstall needed).
+
 ## v1.5.0 (2026-11-19)
 - **Smarter ETA:** each stop-to-stop run follows a realistic speed profile (accelerate, cruise up to ~80 km/h, brake), so slow and fast parts of the ride no longer throw the estimate off. The app notices when the train stops at a station and when it departs, uses the real dwell time, and compares the time since departure with the profile to see whether this train is running late or early.
 - **Waiting for the train:** when you start on the platform, the ETA includes the expected wait (Metro trains every 3-10 min depending on the hour, from the RTA timetable).
