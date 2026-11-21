@@ -22,6 +22,12 @@ public class AlarmVibePlugin: CAPPlugin, CAPBridgedPlugin {
     private var stopAt: Date?
     private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
+    // Let the app's own sounds (tune previews, web alarm) play even when the ring/silent switch is on
+    // silent; mixWithOthers so the user's music is not interrupted.
+    override public func load() {
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+    }
+
     @objc func start(_ call: CAPPluginCall) {
         let sound = call.getBool("sound") ?? true
         let maxSeconds = call.getInt("maxSeconds") ?? 300
@@ -67,6 +73,7 @@ public class AlarmVibePlugin: CAPPlugin, CAPBridgedPlugin {
         player?.stop(); player = nil
         stopAt = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
         endBackgroundTask()
     }
 

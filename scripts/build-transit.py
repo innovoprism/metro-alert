@@ -202,6 +202,18 @@ def main(src, dst):
         m = re.match(r"([A-Za-z]*)(\d*)(.*)", n)
         return (m.group(1), int(m.group(2) or 0), m.group(3))
 
+    # service hours per bus route + direction: first and last departure (minutes), weekdays / weekends
+    cal_b = {c["service_id"]: c for c in csv.DictReader(rd("calendar.txt"))}
+    hours = collections.defaultdict(lambda: {"wd": [], "we": []})
+    for tid, lst in seq.items():
+        t = trips.get(tid)
+        if not t or lst[0][2] is None: continue
+        c = cal_b.get(t["service_id"]) or {}
+        k = (t["route_id"], t["direction_id"])
+        if c.get("monday") == "1": hours[k]["wd"].append(lst[0][2] // 60)
+        if c.get("saturday") == "1": hours[k]["we"].append(lst[0][2] // 60)
+    def span(v): return [min(v), max(v)] if v else None
+
     buses = []
     for rid, r in routes.items():
         if r["route_type"] != "3":
@@ -215,6 +227,7 @@ def main(src, dst):
             dirs.append({"d": int(d), "to": clean(head) or clean(stops[sq[-1]]["stop_name"]),
                          "stops": [bstop(s) for s in sq],
                          "secs": seg_times(tp, len(sq)),
+                         "hours": {dt: span(hours[(rid, d)][dt]) for dt in ("wd", "we")},
                          "shape": encode(simplify(shapes.get(shp, []), TOL)) if shp in shapes else ""})
         if dirs:
             buses.append({"n": r["route_short_name"], "name": clean(r["route_long_name"]), "dirs": dirs})

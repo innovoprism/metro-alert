@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.8.0 (2026-11-22)
+- **🧭 How to get there (journey planner):** after choosing a destination, tap "How to get there" for up to 3 routes combining walking, buses and the Metro (fastest, fewer changes, more Metro / bus only). Each shows the total time, arrival time, every step, Metro frequency and the real next scheduled buses at the time you reach each stop. Night buses are only used at night, and the Metro's closing hours are respected.
+- **Trips with changes:** "Start trip with alarms" wakes you at every stop where you change ("Change to Bus 20 at Rashidiya Bus Station") and at your final stop, then continues with the next part automatically.
+- **Bus times in the route view:** opening a bus route shows the next buses at its stop nearest to you.
+- **Live status before boarding:** "Go to InsuranceMarket to board the Red Line".
+- **Share my ETA** (📤 while tracking), **dark mode** (Settings → Appearance: Auto / Light / Dark), **recent trips** row.
+- Fix: tune previews play through the app's media player, so you can hear them even when the phone is on silent or the alarm volume is low. *iPhone: reinstall the app for this part.*
+
 ## v1.7.0 (2026-11-22)
 - **Live train status:** "Waiting for the train", "Departing … accelerating", "On the way to …", "Arriving at …", "Stopped at … 0:25", "Arrived" – with the current speed. Departure is recognised within seconds, so the ETA reacts faster when the train leaves.
 - **Bus times per stop:** "🕒 Next buses near me" in the Bus tab, and a 🕒 button on every bus stop, show the next departures of each route (RTA timetable, weekday/weekend). Bus trips include the wait for the next scheduled bus in the ETA.
