@@ -42,11 +42,12 @@ public class AlarmVibePlugin: CAPPlugin, CAPBridgedPlugin {
             }
             self.bgTask = UIApplication.shared.beginBackgroundTask(withName: "MetroAlertAlarm") { self.endBackgroundTask() }
             self.stopAt = Date().addingTimeInterval(TimeInterval(maxSeconds))
-            AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+            let vibrate = call.getBool("vibrate") ?? true      // tune preview: sound only
+            if vibrate { AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate)) }
             let t = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
                 if let s = self.stopAt, Date() > s { self.stopAll(); return }
-                AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate))
+                if vibrate { AudioServicesPlayAlertSound(SystemSoundID(kSystemSoundID_Vibrate)) }
             }
             RunLoop.main.add(t, forMode: .common)
             self.timer = t

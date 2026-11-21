@@ -41,6 +41,15 @@ jobs:
           fi
           sed -i "s/DATABASE_ID/$DBID/" wrangler.toml
           $W d1 execute metro-alert-db --remote --file=schema.sql -y
+          # bus timetable: load only when it changed (saves the free plan's daily write quota)
+          WANT=$(cat data/bus_departures.sql.version)
+          HAVE=$($W d1 execute metro-alert-db --remote --json --command "SELECT v FROM meta WHERE k='bus_dep'" | node -e "try{const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(((d[0].results||[])[0]||{}).v||'')}catch(e){}")
+          if [ "$WANT" != "$HAVE" ]; then
+            echo "Loading bus timetable ($HAVE -> $WANT)"
+            $W d1 execute metro-alert-db --remote --file=data/bus_departures.sql -y
+          else
+            echo "Bus timetable up to date ($HAVE)"
+          fi
           $W deploy | tee deploy.log
           if [ -n "$STATS_KEY" ]; then printf '%s' "$STATS_KEY" | $W secret put STATS_KEY; fi
           URL=$(grep -oE 'https://[a-z0-9.-]+\.workers\.dev' deploy.log | head -1)

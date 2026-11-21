@@ -6,6 +6,7 @@
 //   POST /api/samples      measured stop-to-stop times {id, samples:[{k, b, run, dwell}]}
 //   GET  /api/timings?b=   learned times for a time-of-day bucket
 //   GET  /api/version      latest release (for in-app updates)
+//   GET  /api/departures?stops=id1,id2[&route=8&dir=0]  next buses at stops (RTA timetable)
 //   POST /api/auth/signup  {email, password, name, id}   -> {token, user}
 //   POST /api/auth/login   {email, password, id}         -> {token, user}
 //   POST /api/auth/logout  (Authorization: Bearer token)
@@ -43,6 +44,7 @@ export default {
       if (p === '/api/me') return await me(req, env);
       if (p === '/api/samples' && req.method === 'POST') return await samples(await req.json(), env);
       if (p === '/api/timings') return await timings(url, env);
+      if (p === '/api/departures') return await departures(url, env);
       if (p === '/api/version') return await version(env, ctx);
       if (p === '/api/stats') return authorised(url, env) ? json(await stats(env)) : json({ error: 'key required' }, 401);
       if (p === '/stats') return authorised(url, env) ? html(dashboard(await stats(env))) : html(loginPage(), 401);
@@ -216,6 +218,35 @@ async function timings(url, env) {
   return json({ bucket, segments: out }, 200, { 'Cache-Control': 'public, max-age=600' });
 }
 
+// ---------------------------------------------------------------- bus departures
+// Next departures per route at one or more stops, from the RTA timetable (Dubai time).
+async function departures(url, env) {
+  const stops = (url.searchParams.get('stops') || '').split(',').filter(x => /^[\w-]{1,20}$/.test(x)).slice(0, 8);
+  if (!stops.length) return json({ error: 'stops required' }, 400);
+  const route = url.searchParams.get('route'), dir = url.searchParams.get('dir');
+  const limit = Math.min(6, Math.max(1, +url.searchParams.get('n') || 3));
+  const t = new Date(Date.now() + 4 * 3600e3);
+  const day = t.getUTCDay(), nowMin = t.getUTCHours() * 60 + t.getUTCMinutes();
+  const dt = day === 0 || day === 6 ? 'we' : 'wd';
+  const prevDt = day === 1 || day === 0 ? 'we' : 'wd';          // yesterday's after-midnight trips (times >= 24:00)
+  const { results } = await env.DB.prepare(
+    `SELECT stop, route, dir, headsign, wd, we FROM bus_dep WHERE stop IN (${stops.map((_, i) => '?' + (i + 1)).join(',')})`
+  ).bind(...stops).all();
+  const out = {};
+  for (const r of results) {
+    if (route && r.route !== route) continue;
+    if (dir != null && dir !== '' && String(r.dir) !== String(dir)) continue;
+    const today = (r[dt] || '').split(',').filter(Boolean).map(Number);
+    const late = (r[prevDt] || '').split(',').filter(Boolean).map(Number).filter(m => m >= 1440).map(m => m - 1440);
+    const all = [...late, ...today].filter(m => m >= nowMin).sort((a, b) => a - b);
+    const next = all.slice(0, limit);
+    const first = today.length ? today[0] : null;
+    (out[r.stop] = out[r.stop] || []).push({ route: r.route, dir: r.dir, to: r.headsign, next, inMin: next.map(m => m - nowMin), first });
+  }
+  for (const k in out) out[k].sort((a, b) => (a.next.length ? a.next[0] : 1e9) - (b.next.length ? b.next[0] : 1e9));
+  return json({ now: nowMin, day: dt, source: 'RTA timetable', stops: out }, 200, { 'Cache-Control': 'public, max-age=60' });
+}
+
 // ---------------------------------------------------------------- latest version
 async function version(env, ctx) {
   const cache = caches.default, key = new Request('https://cache.local/api/version');
@@ -259,6 +290,14 @@ async function stats(env) {
     q('SELECT COUNT(*) segments, COALESCE(SUM(n), 0) samples FROM seg WHERE n >= 3'),
   ]);
   const acc = (await q('SELECT COUNT(*) total, SUM(CASE WHEN created >= ?1 THEN 1 ELSE 0 END) new30 FROM users', d30))[0];
+  const users = await q(`
+    SELECT u.name, u.email, u.created, u.trips, u.alarms,
+      (SELECT MAX(i.last_seen) FROM install_user iu JOIN installs i ON i.id = iu.id WHERE iu.user_id = u.id) AS last_seen,
+      (SELECT GROUP_CONCAT(DISTINCT i.platform) FROM install_user iu JOIN installs i ON i.id = iu.id WHERE iu.user_id = u.id) AS platforms,
+      (SELECT COUNT(*) FROM install_user iu WHERE iu.user_id = u.id) AS devices,
+      (SELECT COUNT(*) FROM sessions se WHERE se.user_id = u.id AND se.expires > ?1) AS sessions
+    FROM users u ORDER BY COALESCE(last_seen, u.created) DESC, u.id DESC LIMIT 1000`, Date.now());
+  const loggedIn = users.filter(u => u.sessions > 0).length;
   const byP = rows => Object.fromEntries(['web', 'android', 'ios'].map(p => [p, (rows.find(r => r.platform === p) || {}).n || 0]));
   const days = [];
   for (let i = 29; i >= 0; i--) {
@@ -267,7 +306,7 @@ async function stats(env) {
       active: byP(actDays.filter(r => r.day === d)), new: byP(newDays.filter(r => r.day === d)) });
   }
   return { today: d0, users: byP(total), activeToday: byP(act1), active7: byP(act7), active30: byP(act30),
-    days, versions, events: ev, learned: learned[0], accounts: { total: acc.total || 0, new30: acc.new30 || 0 } };
+    days, versions, events: ev, learned: learned[0], accounts: { total: acc.total || 0, new30: acc.new30 || 0, loggedIn }, userList: users };
 }
 
 const html = (body, status = 200) => new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
@@ -303,11 +342,17 @@ function dashboard(s) {
   const card = (label, o, note) => `<div class="card"><small>${label}</small><b>${sum(o)}</b><div class="split">${split(o)}</div>${note ? `<small>${note}</small>` : ''}</div>`;
   return page('Metro Alert – usage', `
 <h1>Metro Alert – usage</h1><div class="muted">Counted on the server. Dubai date ${esc(s.today)}. Anonymous: one random id per app install.</div>
-<div class="grid"><div class="card"><small>Registered accounts</small><b>${s.accounts.total}</b><small>${s.accounts.new30} signed up in the last 30 days</small></div>${card('Total users (installs)', s.users)}${card('Active today', s.activeToday)}${card('Active last 7 days', s.active7)}${card('Active last 30 days', s.active30)}</div>
+<div class="grid"><div class="card"><small>Registered accounts</small><b>${s.accounts.total}</b><small>${s.accounts.new30} new in 30 days · ${s.accounts.loggedIn} logged in now</small></div>${card('Total users (installs)', s.users)}${card('Active today', s.activeToday)}${card('Active last 7 days', s.active7)}${card('Active last 30 days', s.active30)}</div>
 <h2>Daily active users, last 30 days</h2><div class="bars">${bars}</div>
 <div class="muted" style="margin-top:6px">${['web', 'android', 'ios'].map(p => `<span class="dot" style="background:${COL[p]}"></span>${p}`).join('')}</div>
 <h2>Trips and alarms, last 30 days</h2><table><tr><th>Event</th><th>Platform</th><th>Count</th></tr>${evRows}</table>
 <h2>App versions in use (last 30 days)</h2><table><tr><th>Platform</th><th>Version</th><th>Users</th></tr>${verRows}</table>
+<h2>Registered users (${s.userList.length})</h2>
+<input id="uq" placeholder="Search name or email…" style="width:100%;box-sizing:border-box;height:40px;border-radius:10px;border:1px solid #d1d5db;padding:0 12px;font-size:15px;margin-bottom:8px">
+<div style="overflow-x:auto"><table id="ut"><tr><th>Name</th><th>Email</th><th>Signed up</th><th>Last seen</th><th>Devices</th><th>Logged in</th><th>Trips</th><th>Alarms</th></tr>${
+  s.userList.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.created)}</td><td>${esc(u.last_seen || '–')}</td><td>${u.devices}${u.platforms ? ' · ' + esc(u.platforms.replace(/,/g, ', ')) : ''}</td><td>${u.sessions > 0 ? '✅ ' + u.sessions + (u.sessions > 1 ? ' devices' : '') : '–'}</td><td>${u.trips}</td><td>${u.alarms}</td></tr>`).join('') || '<tr><td colspan=8 class="muted">No accounts yet</td></tr>'
+}</table></div>
+<script>document.getElementById('uq').oninput=e=>{const q=e.target.value.toLowerCase();document.querySelectorAll('#ut tr').forEach((r,i)=>{if(i)r.style.display=r.textContent.toLowerCase().includes(q)?'':'none'})}</script>
 <h2>Learned train/bus timings</h2><div class="card"><b>${s.learned.segments}</b><small>stop-to-stop segments learned from ${s.learned.samples} real rides</small></div>`);
 }
 function loginPage() {

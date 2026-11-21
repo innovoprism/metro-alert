@@ -3,6 +3,7 @@ package com.metroalert.app;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.media.AudioAttributes;
+import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
@@ -30,6 +31,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 public class AlarmVibePlugin extends Plugin {
     private Ringtone ringtone;
     private MediaPlayer player;
+    private int savedAlarmVolume = -1;
     private PowerManager.WakeLock wakeLock;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable autoStop = this::stopAll;
@@ -59,7 +61,7 @@ public class AlarmVibePlugin extends Plugin {
 
         // vibrate 1.2 s, pause 0.3 s, repeat forever
         long[] pattern = {0, 1200, 300};
-        Vibrator v = vibrator();
+        Vibrator v = call.getBoolean("vibrate", true) ? vibrator() : null;   // tune preview: sound only
         if (v != null && v.hasVibrator()) {
             if (Build.VERSION.SDK_INT >= 33) {
                 v.vibrate(VibrationEffect.createWaveform(pattern, 1),
@@ -72,9 +74,23 @@ public class AlarmVibePlugin extends Plugin {
             }
         }
 
+        // the alarm plays on the ALARM volume: if it is turned (almost) down, raise it while ringing
+        if (sound) {
+            try {
+                AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
+                int max = am.getStreamMaxVolume(AudioManager.STREAM_ALARM), cur = am.getStreamVolume(AudioManager.STREAM_ALARM);
+                int want = (int) Math.ceil(max * 0.7);
+                if (cur < want) { savedAlarmVolume = cur; am.setStreamVolume(AudioManager.STREAM_ALARM, want, 0); }
+            } catch (Exception ignored) { }
+        }
         if (sound && tune != null && !"system".equals(tune)) {
             try {
-                AssetFileDescriptor fd = getContext().getAssets().openFd("public/" + tune);
+                // tunes are bundled uncompressed in res/raw as tune_<name> (see scripts/patch-native.js)
+                String base = tune.substring(tune.lastIndexOf('/') + 1);
+                if (base.contains(".")) base = base.substring(0, base.lastIndexOf('.'));
+                int resId = getContext().getResources().getIdentifier("tune_" + base, "raw", getContext().getPackageName());
+                AssetFileDescriptor fd = resId != 0 ? getContext().getResources().openRawResourceFd(resId)
+                                                    : getContext().getAssets().openFd("public/" + tune);
                 player = new MediaPlayer();
                 player.setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_ALARM)
@@ -128,6 +144,10 @@ public class AlarmVibePlugin extends Plugin {
         if (v != null) v.cancel();
         if (ringtone != null) { try { ringtone.stop(); } catch (Exception ignored) { } ringtone = null; }
         if (player != null) { try { player.stop(); player.release(); } catch (Exception ignored) { } player = null; }
+        if (savedAlarmVolume >= 0) {
+            try { ((AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE)).setStreamVolume(AudioManager.STREAM_ALARM, savedAlarmVolume, 0); } catch (Exception ignored) { }
+            savedAlarmVolume = -1;
+        }
         if (wakeLock != null && wakeLock.isHeld()) { try { wakeLock.release(); } catch (Exception ignored) { } }
         wakeLock = null;
     }

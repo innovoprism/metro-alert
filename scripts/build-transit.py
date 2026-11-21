@@ -212,7 +212,7 @@ def main(src, dst):
             if not tp:
                 continue
             sq, head, shp = tp
-            dirs.append({"to": clean(head) or clean(stops[sq[-1]]["stop_name"]),
+            dirs.append({"d": int(d), "to": clean(head) or clean(stops[sq[-1]]["stop_name"]),
                          "stops": [bstop(s) for s in sq],
                          "secs": seg_times(tp, len(sq)),
                          "shape": encode(simplify(shapes.get(shp, []), TOL)) if shp in shapes else ""})
@@ -228,6 +228,8 @@ def main(src, dst):
                 serves[s].add(b["n"])
     for i, s in enumerate(bus_stops):
         s.append(sorted(serves[i], key=route_key))
+    for sid, i in bus_stop_ids.items():
+        bus_stops[i].append(sid)                     # [name, lat, lng, routes, gtfs stop_id]
 
     # ---------------- Metro headways (minutes between trains, by hour) ----------------
     # wd = weekdays (Mon-Fri), we = weekend (Sat-Sun); used to estimate the wait on the platform.

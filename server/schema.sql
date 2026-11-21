@@ -48,3 +48,12 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id);
 CREATE TABLE IF NOT EXISTS install_user (id TEXT PRIMARY KEY, user_id INTEGER NOT NULL);
+
+-- RTA bus timetable: departure minutes after midnight (comma list), weekdays and weekends.
+-- Loaded from server/data/bus_departures.sql by the deploy workflow when it changes.
+CREATE TABLE IF NOT EXISTS bus_dep (
+  stop TEXT NOT NULL, route TEXT NOT NULL, dir INTEGER NOT NULL, headsign TEXT,
+  wd TEXT, we TEXT,
+  PRIMARY KEY (stop, route, dir)
+);
+CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);

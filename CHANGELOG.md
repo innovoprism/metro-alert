@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.7.0 (2026-11-22)
+- **Live train status:** "Waiting for the train", "Departing … accelerating", "On the way to …", "Arriving at …", "Stopped at … 0:25", "Arrived" – with the current speed. Departure is recognised within seconds, so the ETA reacts faster when the train leaves.
+- **Bus times per stop:** "🕒 Next buses near me" in the Bus tab, and a 🕒 button on every bus stop, show the next departures of each route (RTA timetable, weekday/weekend). Bus trips include the wait for the next scheduled bus in the ETA.
+- **Admin page:** list of registered users (name, email, sign-up date, last seen, devices and platforms, logged in now, trips, alarms) with search.
+- Fix: tune previews no longer overlap on the web app; tap ■ to stop a preview.
+- Fix (Android app): tunes play from the app's sound resources, and the alarm volume is raised while the alarm rings if it was turned down. Previews don't vibrate. *Reinstall the APK/IPA to get this part; everything else arrives as an in-app update.*
+
 ## v1.6.0 (2026-11-19)
 - **Fix: the alarm kept going after "I'm getting off".** Tapping it right after the alarm started could leave the native alarm running; alarm notifications also kept playing their sound. Now everything stops at once: vibration, sound, repeat reminders and notifications on screen.
 - **"I'm getting off" button on the notification**, so you can stop the alarm without opening the app.
