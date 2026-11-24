@@ -23,17 +23,12 @@ const CORS = {
 const PLATFORMS = new Set(['web', 'android', 'ios']);
 const EVENTS = new Set(['trip-metro', 'trip-bus', 'trip-stop', 'trip-pin', 'alarm', 'install', 'update', 'share', 'plan']);
 // coins: amount per action and the most that can be earned per day for it (once = only ever once)
+// Since v2.1 there is only one way to earn: reach your stop on a tracked trip, checked by the server.
 const REWARDS = {
-  welcome: { coins: 50, once: true, label: 'Welcome bonus' },
-  signup: { coins: 100, once: true, label: 'Created an account' },
-  daily: { coins: 5, perDay: 1, label: 'Opened the app today' },
-  trip: { coins: 5, perDay: 4, label: 'Started a trip' },
-  arrived: { coins: 10, perDay: 4, label: 'Woke up at your stop' },
-  plan: { coins: 3, perDay: 3, label: 'Planned a journey' },
-  share: { coins: 5, perDay: 2, label: 'Shared your ETA' },
-  timing: { coins: 1, perDay: 20, label: 'Helped learn train times' },
+  arrived: { coins: 10, perKm: 2, maxCoins: 40, perDay: 4, label: 'Reached your stop on a tracked trip',
+    note: '10 coins + 2 per km (max 40), checked from your GPS trip. Starting and stopping a trip gives nothing.' },
 };
-const EVENT_REWARD = { 'trip-metro': 'trip', 'trip-bus': 'trip', 'trip-stop': 'trip', 'trip-pin': 'trip', alarm: 'arrived', share: 'share', plan: 'plan', install: 'welcome' };
+const EVENT_REWARD = {};
 const BUCKET_RE = /^(wd|we)-(n|e|am|md|pm|ev)$/;
 const ID_RE = /^[0-9a-f-]{16,40}$/i;
 
@@ -55,6 +50,8 @@ export default {
       if (p === '/api/auth/logout' && req.method === 'POST') return await logout(req, env);
       if (p === '/api/me') return await me(req, env);
       if (p === '/api/coins') return await coinsRoute(url, req, env);
+      if (p === '/api/trip/start' && req.method === 'POST') return await tripStart(await req.json(), env, await sessionUser(req, env));
+      if (p === '/api/trip/end' && req.method === 'POST') return await tripEnd(await req.json(), env, await sessionUser(req, env));
       if (p === '/api/samples' && req.method === 'POST') return await samples(await req.json(), env, await sessionUser(req, env));
       if (p === '/api/timings') return await timings(url, env);
       if (p === '/api/departures') return await departures(url, env);
@@ -86,7 +83,7 @@ async function hello(b, env, ctx, user) {
     env.DB.prepare('INSERT OR IGNORE INTO active (day, id, platform) VALUES (?1, ?2, ?3)').bind(day, id, platform),
     ...(user ? [env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(id, user.id)] : []),
   ]);
-  const gained = await award(env, ownerOf(user, id), 'daily');
+  const gained = 0;
   // keep the daily-active table small (> 400 days old is not needed)
   if (Math.random() < 0.01) ctx.waitUntil(env.DB.prepare('DELETE FROM active WHERE day < ?1').bind(dubaiDay(400)).run());
   return json({ ok: true, gained });
@@ -97,8 +94,6 @@ async function event(b, env, user) {
   if (!PLATFORMS.has(platform) || !EVENTS.has(name)) return json({ error: 'bad request' }, 400);
   await env.DB.prepare(`INSERT INTO events (day, platform, name, n) VALUES (?1, ?2, ?3, 1)
                         ON CONFLICT(day, platform, name) DO UPDATE SET n = n + 1`).bind(dubaiDay(), platform, name).run();
-  if (user && name.startsWith('trip-')) await env.DB.prepare('UPDATE users SET trips = trips + 1 WHERE id = ?1').bind(user.id).run();
-  if (user && name === 'alarm') await env.DB.prepare('UPDATE users SET alarms = alarms + 1 WHERE id = ?1').bind(user.id).run();
   const gained = EVENT_REWARD[name] ? await award(env, ownerOf(user, str(b.id, 40)), EVENT_REWARD[name]) : 0;
   return json({ ok: true, gained });
 }
@@ -106,7 +101,68 @@ async function event(b, env, user) {
 // ---------------------------------------------------------------- coins
 const ownerOf = (user, id) => (user ? 'u:' + user.id : ID_RE.test(id || '') ? 'i:' + id : null);
 // award coins for `reason` (n times), respecting the daily / one-time limits; returns coins added
-async function award(env, owner, reason, n = 1) {
+// ---------------------------------------------------------------- verified trips
+const toRad = x => x * Math.PI / 180;
+function dist(a, b) {
+  const R = 6371000, dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const pt = v => (v && Number.isFinite(+v.lat) && Number.isFinite(+v.lng) && Math.abs(v.lat) <= 90 && Math.abs(v.lng) <= 180 ? { lat: +v.lat, lng: +v.lng } : null);
+const isRailTrip = t => t.line === 'etihad';
+async function tripStart(b, env, user) {
+  const id = str(b.id, 40), platform = str(b.platform, 10), to = pt(b.to);
+  if (!ID_RE.test(id) || !PLATFORMS.has(platform) || !to) return json({ error: 'bad request' }, 400);
+  const from = pt(b.from), trip = crypto.randomUUID(), owner = ownerOf(user, id), now = Date.now();
+  // an older open trip of this phone is closed as stopped
+  await env.DB.batch([
+    env.DB.prepare("UPDATE trips SET status = 'stopped', ended = ?2, why = 'replaced by a new trip' WHERE install = ?1 AND status = 'open'").bind(id, now),
+    env.DB.prepare(`INSERT INTO trips (id, owner, install, platform, kind, dest, line, started, from_lat, from_lng, to_lat, to_lng, day)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`)
+      .bind(trip, owner, id, platform, str(b.kind, 10), str(b.dest, 80), str(b.line, 20), now, from ? from.lat : null, from ? from.lng : null, to.lat, to.lng, dubaiDay()),
+    ...(user ? [env.DB.prepare('UPDATE users SET trips = trips + 1 WHERE id = ?1').bind(user.id)] : []),
+  ]);
+  return json({ ok: true, trip });
+}
+// checks that the trip is real: long enough, took a believable time, actually moved, ended at the stop
+function checkTrip(t, at, travelled, good, now) {
+  const to = { lat: t.to_lat, lng: t.to_lng }, from = t.from_lat != null ? { lat: t.from_lat, lng: t.from_lng } : null;
+  const secs = (now - t.started) / 1000, straight = from ? dist(from, to) : null, rail = isRailTrip(t);
+  if (!at) return 'no end position';
+  if (dist(at, to) > (rail ? 3000 : 700)) return 'did not end at the stop';
+  if (secs > 4 * 3600) return 'trip too old';
+  if (straight != null && straight < 700) return 'trip shorter than 700 m';
+  if (travelled < 500 || (straight != null && travelled < straight * 0.5)) return 'not enough distance travelled';
+  if (secs < 120) return 'too quick';
+  if (secs < (straight || travelled) / (rail ? 70 : 35)) return 'faster than the train or bus can go';
+  if (good < 5) return 'not enough GPS readings';
+  return null;
+}
+async function tripEnd(b, env, user) {
+  const id = str(b.id, 40), trip = str(b.trip, 40), status = b.status === 'arrived' ? 'arrived' : 'stopped';
+  if (!ID_RE.test(id) || !trip) return json({ error: 'bad request' }, 400);
+  const t = await env.DB.prepare('SELECT * FROM trips WHERE id = ?1 AND install = ?2').bind(trip, id).first();
+  if (!t) return json({ error: 'unknown trip' }, 404);
+  if (t.status !== 'open') return json({ ok: true, gained: 0, reason: 'already finished' });
+  const f = pt(b.from);
+  if (t.from_lat == null && f) { t.from_lat = f.lat; t.from_lng = f.lng;
+    await env.DB.prepare('UPDATE trips SET from_lat = ?2, from_lng = ?3 WHERE id = ?1').bind(trip, f.lat, f.lng).run(); }
+  const now = Date.now(), travelled = Math.max(0, Math.min(1e6, Math.round(+b.travelled || 0))), good = Math.max(0, +b.good || 0);
+  let why = status === 'arrived' ? checkTrip(t, pt(b.at), travelled, good, now) : 'stopped before the stop';
+  let gained = 0;
+  if (!why) {
+    const km = (t.from_lat != null ? dist({ lat: t.from_lat, lng: t.from_lng }, { lat: t.to_lat, lng: t.to_lng }) : travelled) / 1000;
+    const r = REWARDS.arrived, owner = ownerOf(user, id) || t.owner;
+    gained = await award(env, owner, 'arrived', 1, Math.min(r.maxCoins, r.coins + Math.floor(km) * r.perKm));
+    if (!gained) why = 'daily limit of ' + r.perDay + ' trips reached';
+    else if (user) await env.DB.prepare('UPDATE users SET alarms = alarms + 1 WHERE id = ?1').bind(user.id).run();
+  }
+  await env.DB.prepare('UPDATE trips SET status = ?2, ended = ?3, travelled = ?4, coins = ?5, why = ?6, owner = COALESCE(?7, owner) WHERE id = ?1')
+    .bind(trip, status, now, travelled, gained, why, ownerOf(user, id)).run();
+  return json({ ok: true, gained, reason: why });
+}
+
+async function award(env, owner, reason, n = 1, coinsEach = null) {
   const r = REWARDS[reason];
   if (!owner || !r) return 0;
   const day = r.once ? '-' : dubaiDay();
@@ -114,7 +170,7 @@ async function award(env, owner, reason, n = 1) {
   const row = await env.DB.prepare('SELECT n FROM coin_log WHERE day = ?1 AND owner = ?2 AND reason = ?3').bind(day, owner, reason).first();
   const take = Math.min(n, max - (row ? row.n : 0));
   if (take <= 0) return 0;
-  const add = take * r.coins;
+  const add = take * (coinsEach || r.coins);
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO coin_log (day, owner, reason, n) VALUES (?1, ?2, ?3, ?4)
                     ON CONFLICT(day, owner, reason) DO UPDATE SET n = n + ?4`).bind(day, owner, reason, take),
@@ -128,11 +184,12 @@ async function moveInstallCoins(env, installId, userId) {
   if (!ID_RE.test(installId || '')) return;
   const from = 'i:' + installId, to = 'u:' + userId;
   const w = await env.DB.prepare('SELECT coins, earned FROM wallet WHERE owner = ?1').bind(from).first();
-  if (!w || (!w.coins && !w.earned)) return;
+  if (!w || (!w.coins && !w.earned)) { await env.DB.prepare('UPDATE trips SET owner = ?2 WHERE owner = ?1').bind(from, to).run(); return; }
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO wallet (owner, coins, earned, updated) VALUES (?1, ?2, ?3, ?4)
                     ON CONFLICT(owner) DO UPDATE SET coins = coins + ?2, earned = earned + ?3, updated = ?4`).bind(to, w.coins, w.earned, dubaiDay()),
     env.DB.prepare('DELETE FROM wallet WHERE owner = ?1').bind(from),
+    env.DB.prepare('UPDATE trips SET owner = ?2 WHERE owner = ?1').bind(from, to),
     env.DB.prepare('UPDATE coin_log SET owner = ?2 WHERE owner = ?1 AND NOT EXISTS (SELECT 1 FROM coin_log c2 WHERE c2.day = coin_log.day AND c2.owner = ?2 AND c2.reason = coin_log.reason)').bind(from, to),
   ]);
 }
@@ -142,9 +199,19 @@ async function coinsInfo(env, owner) {
   const today = owner ? (await env.DB.prepare("SELECT reason, n FROM coin_log WHERE owner = ?1 AND (day = ?2 OR day = '-')").bind(owner, dubaiDay()).all()).results : [];
   const coins = w ? w.coins : 0, earned = w ? w.earned : 0, lv = level(earned);
   const rank = owner ? (await env.DB.prepare('SELECT COUNT(*) + 1 r FROM wallet WHERE earned > ?1').bind(earned).first()).r : null;
+  const trips = owner ? (await env.DB.prepare('SELECT * FROM trips WHERE owner = ?1 ORDER BY started DESC LIMIT 10').bind(owner).all()).results : [];
+  const top = (await env.DB.prepare(`SELECT w.owner, w.earned, u.name FROM wallet w LEFT JOIN users u ON 'u:' || u.id = w.owner
+                                     WHERE w.earned > 0 ORDER BY w.earned DESC LIMIT 10`).all()).results;
+  const fmt = ms => new Date(ms + 4 * 3600e3).toISOString().slice(5, 16).replace('T', ' ');
   return { coins, earned, level: lv, nextLevelAt: 25 * lv * lv, rank,
-    rules: Object.entries(REWARDS).map(([k, r]) => ({ id: k, label: r.label, coins: r.coins, max: r.once ? 1 : r.perDay, once: !!r.once,
-      doneToday: (today.find(t => t.reason === k) || {}).n || 0 })) };
+    rules: Object.entries(REWARDS).map(([k, r]) => ({ id: k, label: r.label, note: r.note, coins: r.coins, perKm: r.perKm, max: r.perDay, once: false,
+      doneToday: (today.find(t => t.reason === k) || {}).n || 0 })),
+    trips: trips.map(t => {
+      const km = t.from_lat != null ? dist({ lat: t.from_lat, lng: t.from_lng }, { lat: t.to_lat, lng: t.to_lng }) / 1000 : (t.travelled || 0) / 1000;
+      return { dest: t.dest, when: fmt(t.started), status: t.status, coins: t.coins, why: t.why, km: Math.round(km * 10) / 10,
+        min: Math.round(((t.ended || Date.now()) - t.started) / 60000) };
+    }),
+    top: top.map(t => ({ name: t.name ? t.name.split(' ')[0] : 'Rider ' + t.owner.slice(2, 6), earned: t.earned, me: t.owner === owner })) };
 }
 async function coinsRoute(url, req, env) {
   const user = await sessionUser(req, env);
@@ -199,7 +266,6 @@ async function signup(b, env) {
   const id = r.meta.last_row_id;
   if (ID_RE.test(str(b.id, 40))) await env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(b.id, id).run();
   await moveInstallCoins(env, str(b.id, 40), id);
-  await award(env, 'u:' + id, 'signup');
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?1').bind(id).first();
   return json({ token: await newSession(env, id), user: publicUser(user) });
 }
@@ -276,7 +342,7 @@ async function samples(b, env, user) {
       WHERE n < 3 OR (excluded.run >= 0.5 * run AND excluded.run <= 2.0 * run)`).bind(key, bucket, run, dw, day));
   }
   if (stmts.length) await env.DB.batch(stmts);
-  const gained = stmts.length ? await award(env, ownerOf(user, str(b.id, 40)), 'timing', stmts.length) : 0;
+  const gained = 0;
   return json({ ok: true, accepted: stmts.length, gained });
 }
 
@@ -376,6 +442,10 @@ async function stats(env) {
   const coinToday = (await q(`SELECT c.reason, SUM(c.n) n FROM coin_log c WHERE c.day = ?1 GROUP BY c.reason`, d0));
   const topAnon = await q(`SELECT w.owner, w.coins, w.earned, i.platform, i.last_seen FROM wallet w LEFT JOIN installs i ON 'i:' || i.id = w.owner
                            WHERE w.owner LIKE 'i:%' ORDER BY w.earned DESC LIMIT 20`);
+  const tripTot = (await q(`SELECT COUNT(*) started, SUM(CASE WHEN status = 'arrived' THEN 1 ELSE 0 END) arrived,
+      SUM(CASE WHEN coins > 0 THEN 1 ELSE 0 END) rewarded, SUM(CASE WHEN status = 'stopped' THEN 1 ELSE 0 END) stopped,
+      SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) open, COALESCE(SUM(coins), 0) coins FROM trips WHERE day = ?1`, d0))[0];
+  const tripList = await q(`SELECT t.*, u.name uname FROM trips t LEFT JOIN users u ON 'u:' || u.id = t.owner ORDER BY t.started DESC LIMIT 50`);
   const byP = rows => Object.fromEntries(['web', 'android', 'ios'].map(p => [p, (rows.find(r => r.platform === p) || {}).n || 0]));
   const days = [];
   for (let i = 29; i >= 0; i--) {
@@ -385,6 +455,9 @@ async function stats(env) {
   }
   return { today: d0, users: byP(total), activeToday: byP(act1), active7: byP(act7), active30: byP(act30),
     days, versions, events: ev, learned: learned[0], accounts: { total: acc.total || 0, new30: acc.new30 || 0, loggedIn }, userList: users,
+    trips: { today: tripTot, list: tripList.map(t => ({ ...t, owner: t.uname || (t.install || '').slice(0, 8) + '…', install: undefined,
+      km: t.from_lat != null ? Math.round(dist({ lat: t.from_lat, lng: t.from_lng }, { lat: t.to_lat, lng: t.to_lng }) / 100) / 10 : null,
+      min: Math.round(((t.ended || Date.now()) - t.started) / 60000) })) },
     coins: { ...coinTot, today: coinToday, topAnon: topAnon.map(a => ({ ...a, owner: a.owner.slice(2, 10) + '…' })) } };
 }
 
@@ -428,10 +501,16 @@ function dashboard(s) {
 <h2>App versions in use (last 30 days)</h2><table><tr><th>Platform</th><th>Version</th><th>Users</th></tr>${verRows}</table>
 <h2>Registered users (${s.userList.length})</h2>
 <input id="uq" placeholder="Search name or email…" style="width:100%;box-sizing:border-box;height:40px;border-radius:10px;border:1px solid #d1d5db;padding:0 12px;font-size:15px;margin-bottom:8px">
-<div style="overflow-x:auto"><table id="ut"><tr><th>Name</th><th>Email</th><th>Signed up</th><th>Last seen</th><th>Devices</th><th>Logged in</th><th>Trips</th><th>Alarms</th><th>🪙 Coins</th><th>Level</th></tr>${
+<div style="overflow-x:auto"><table id="ut"><tr><th>Name</th><th>Email</th><th>Signed up</th><th>Last seen</th><th>Devices</th><th>Logged in</th><th>Trips</th><th>Reached</th><th>🪙 Coins</th><th>Level</th></tr>${
   s.userList.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.created)}</td><td>${esc(u.last_seen || '–')}</td><td>${u.devices}${u.platforms ? ' · ' + esc(u.platforms.replace(/,/g, ', ')) : ''}</td><td>${u.sessions > 0 ? '✅ ' + u.sessions + (u.sessions > 1 ? ' devices' : '') : '–'}</td><td>${u.trips}</td><td>${u.alarms}</td><td><b>${u.coins}</b>${u.earned !== u.coins ? ` <span class="muted">(${u.earned} earned)</span>` : ''}</td><td>${level(u.earned)}</td></tr>`).join('') || '<tr><td colspan=10 class="muted">No accounts yet</td></tr>'
 }</table></div>
 <script>document.getElementById('uq').oninput=e=>{const q=e.target.value.toLowerCase();document.querySelectorAll('#ut tr').forEach((r,i)=>{if(i)r.style.display=r.textContent.toLowerCase().includes(q)?'':'none'})}</script>
+<h2>🧾 Trips today (verified)</h2>
+<div class="grid" style="margin-top:0"><div class="card"><small>Started today</small><b>${s.trips.today.started || 0}</b><small>${s.trips.today.open || 0} in progress · ${s.trips.today.stopped || 0} stopped early</small></div>
+<div class="card"><small>Reached the stop</small><b>${s.trips.today.arrived || 0}</b><small>${s.trips.today.rewarded || 0} given coins · ${s.trips.today.coins || 0} coins</small></div></div>
+<h2>Latest trips</h2><div style="overflow-x:auto"><table><tr><th>Started (Dubai)</th><th>Rider</th><th>Platform</th><th>To</th><th>km</th><th>min</th><th>Result</th><th>🪙</th></tr>${
+  s.trips.list.map(t => `<tr><td>${esc(new Date(t.started + 4 * 3600e3).toISOString().slice(5, 16).replace('T', ' '))}</td><td>${esc(t.owner)}</td><td>${esc(t.platform || '')}</td><td>${esc(t.dest || '')}</td><td>${t.km ?? '–'}</td><td>${t.min}</td><td>${esc(t.status)}${t.why ? ` <span class="muted">(${esc(t.why)})</span>` : ''}</td><td><b>${t.coins}</b></td></tr>`).join('') || '<tr><td colspan=8 class="muted">No trips yet</td></tr>'
+}</table></div>
 <h2>🪙 Coins</h2>
 <div class="grid" style="margin-top:0"><div class="card"><small>Coins earned by everyone</small><b>${s.coins.earned}</b><small>${s.coins.coins} still held · ${s.coins.wallets} wallets (${s.coins.anon} without account)</small></div>
 <div class="card"><small>Earned today, by reason</small><div class="split">${s.coins.today.map(t => `${esc(t.reason)} × ${t.n}`).join(' · ') || '–'}</div></div></div>

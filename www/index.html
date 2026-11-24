@@ -226,6 +226,12 @@
   html[data-theme=dark] .motion.brk { background: #3d2f0c; } html[data-theme=dark] .motion.stop { background: #45161a; }
   html[data-theme=dark] .planstrip { background: #3a2a14; }
   html[data-theme=dark] .dest .pin { background: #3a1a20; }
+  .gpsq { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-bottom: 6px; background: var(--bg); }
+  .gpsq.good { color: #0a8a4a; } .gpsq.fair { color: #b7791f; } .gpsq.poor { color: #E4002B; }
+  .coins h4 { margin: 12px 0 4px; font-size: 13px; }
+  .coins .trips li span { text-align: left; }
+  .coins .trips li span small { display: block; opacity: .7; font-size: 11px; }
+  .coins .trips li.no b { opacity: .45; }
   .coins .ctop { display: flex; align-items: center; gap: 12px; }
   .coins .cbig { font-size: 30px; font-weight: 800; } .coins .cbig small { font-size: 14px; color: var(--muted); font-weight: 600; }
   .coins .lv { margin-left: auto; text-align: right; font-size: 13px; color: var(--muted); } .coins .lv b { display: block; color: #b45309; font-size: 16px; }
@@ -458,6 +464,7 @@
     </div>
 
     <div id="live">
+      <div class="gpsq" id="gpsQ">GPS …</div>
       <div class="nextbox" id="nextbox">
         <div class="big" id="togo">–</div>
         <div class="t"><small id="nextLbl">Next stop</small><b id="nextName">Locating…</b></div>
@@ -555,12 +562,30 @@
   const gotCoins = (r, why) => { if (r && r.gained > 0) setTimeout(() => toast(`+${r.gained} 🪙 ${why}`), 900); return r; };
   const EVENT_WHY = { alarm: 'for arriving with Metro Alert', share: 'for sharing', plan: 'for planning', install: 'welcome bonus!' };
   function track(name) {
-    apiCall('/api/event', { id: installId(), platform, name }).then(r => gotCoins(r, EVENT_WHY[name] || 'for your trip'));
+    apiCall('/api/event', { id: installId(), platform, name });
+  }
+  // ---- verified trips: coins are given by the server only for a trip that really reached its stop ----
+  async function tripStart() {
+    const d = S.dest; if (!d) return;
+    const from = S.me || null;
+    const r = await apiCall('/api/trip/start', { id: installId(), platform, kind: d.kind || 'pin', dest: d.name,
+      to: { lat: d.lat, lng: d.lng }, from, line: d.line || d.route || '' });
+    if (r && r.trip && S.tracking && S.dest === d) S._tripId = r.trip;
+  }
+  async function tripEnd(status) {
+    if (S._tripDone) return; S._tripDone = true;
+    const body = { id: installId(), trip: S._tripId, status, at: S.me, from: S._firstPt || null, travelled: Math.round(S._travelled || 0), good: S._good || 0 };
+    if (!S._tripId) { // the start call may still be on its way
+      await new Promise(r => setTimeout(r, 1500)); body.trip = S._tripId; if (!body.trip) return;
+    }
+    const r = await apiCall('/api/trip/end', body);
+    if (r && r.gained > 0) { toast(`+${r.gained} 🪙 for reaching ${S.dest ? S.dest.name : 'your stop'}`); }
+    else if (r && r.reason && status === 'arrived') S._noCoinWhy = r.reason;
   }
   function trackOpen() {
     let first = false;
     try { first = !localStorage.getItem('ma_installed'); localStorage.setItem('ma_installed', '1'); } catch {}
-    apiCall('/api/hello', { id: installId(), platform, version: APP_VER, native: nativeVer }).then(r => gotCoins(r, 'daily bonus'));
+    apiCall('/api/hello', { id: installId(), platform, version: APP_VER, native: nativeVer });
     if (first) track('install');
   }
 
@@ -1529,8 +1554,12 @@
   function unlockAudio() {
     if (!audioUnlocked) {
       audioUnlocked = true;
-      try { tuneAudio.src = tuneFile(S.tune === 'system' ? 'classic' : S.tune); tuneAudio.muted = true;
-        const pr = tuneAudio.play(); if (pr) pr.then(() => { tuneAudio.pause(); tuneAudio.muted = false; }).catch(() => { tuneAudio.muted = false; audioUnlocked = false; }); } catch {}
+      // unlock the player with a silent clip (it used to play the real tune muted, which some phones
+      // still let through and, with loop left on from an earlier alarm, kept going)
+      try { const g = ++tuneGen; tuneAudio.loop = false; tuneAudio.volume = 0; tuneAudio.muted = true; tuneAudio.src = SILENT_WAV;
+        const pr = tuneAudio.play();
+        const done = () => { if (g === tuneGen) { try { tuneAudio.pause(); } catch {} } tuneAudio.muted = false; tuneAudio.volume = 1; };
+        if (pr) pr.then(done).catch(() => { done(); audioUnlocked = false; }); else done(); } catch {}
     }
     try {
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -1539,6 +1568,7 @@
       g.gain.value = 0.0001; o.connect(g).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.05);
     } catch {}
   }
+  const SILENT_WAV = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA==';
   function beep(freq, start, dur, vol = 0.6) {
     if (!audioCtx) return;
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
@@ -1579,7 +1609,7 @@
       alarmTimer = setInterval(() => { if (gen !== tuneGen || !$('alarm').classList.contains('on')) { clearInterval(alarmTimer); alarmTimer = null; return; } alarmBeeps(); }, 2200);
     });
   }
-  function stopTuneLoop() { tuneGen++; tunePlaying = false; clearInterval(alarmTimer); alarmTimer = null; try { tuneAudio.pause(); tuneAudio.currentTime = 0; } catch {} }
+  function stopTuneLoop() { tuneGen++; tunePlaying = false; clearInterval(alarmTimer); alarmTimer = null; try { tuneAudio.pause(); tuneAudio.loop = false; tuneAudio.currentTime = 0; } catch {} }
   // preview a tune for 4 s (settings), through the native player on phones so it sounds like the real alarm
   let previewTimer = null;
   let previewing = null;
@@ -1662,7 +1692,7 @@
     if (!isAndroid && (document.visibilityState !== 'visible' || !isNative)) notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
     repeatNotify((isBus ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent, $('alarmMsg').textContent);
     cancelBackupAlarm();
-    track('alarm');
+    if (S.tracking) track('alarm');
   }
   function stopAlarm() {
     $('alarm').classList.remove('on');
@@ -1768,8 +1798,17 @@
     const on = $('alarm').classList.contains('on');
     if (on && st.lastDismissed > alarmStartedAt) $('dismiss').click();
     else if (!on && st.ringing && S.tracking && !S.alarmed) { S.alarmed = true; fireAlarm('Your stop is coming up!', `${S.dest.name} is close. Get ready to exit.`); }
+    else if (!on && !S.tracking) {   // left over from a trip that ended when the app was closed: silence it
+      if (st.ringing) { AlarmVibe.cancelRing().catch(() => {}); AlarmVibe.stop().catch(() => {}); }
+      cancelBackupAlarm();
+    }
   }
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNativeAlarm(); });
+  // app (re)opened with no trip running: clear alarms left over from a trip that was never stopped
+  setTimeout(() => {
+    if (S.tracking || $('alarm').classList.contains('on')) return;
+    if (isNative) { cancelBackupAlarm(); cancelRepeatNotify(); if (AlarmVibe) { AlarmVibe.stop().catch(() => {}); if (isAndroid) AlarmVibe.cancelRing().catch(() => {}); } }
+  }, 1500);
   async function notify(title, body, urgent) {
     try {
       if (isNative && LocalNotif) {
@@ -2080,7 +2119,44 @@
     el.innerHTML = `<i>${icon}</i><span>${esc(text)}</span><small>${esc(right)}</small>`;
   }
 
-  function onPosition(lat, lng, acc, speed, heading) {
+  // ---- GPS clean-up before anything uses a fix ----
+  // 1. old cached fixes (from before Start) are dropped
+  // 2. very poor fixes (cell towers / Wi-Fi, ±200 m+) are dropped while good ones are coming in
+  // 3. impossible jumps (faster than the vehicle can go) are dropped
+  // 4. the rest is smoothed with a small Kalman filter weighted by each fix's accuracy
+  const KF = { lat: 0, lng: 0, var: -1, t: 0, lastGood: 0, rejects: 0 };
+  function resetGpsFilter() { KF.var = -1; KF.t = 0; KF.lastGood = 0; KF.rejects = 0; S._gpsQ = null; }
+  function gpsMaxSpeed() { const R = S._route; return R && R.rail ? 70 : R && R.mode === 'M' ? 40 : 35; }
+  function onFix(lat, lng, acc, speed, heading, ts) {
+    const now = Date.now();
+    acc = acc > 0 ? acc : 50;
+    if (ts && S.tracking && ts < (S._startedAt || 0) - 3000) return;              // cached from before Start
+    if (ts && now - ts > 30000) return;                                            // stale
+    if (acc > 200 && now - KF.lastGood < 60000) { KF.rejects++; return gpsQuality(acc, true); }
+    if (KF.var >= 0) {
+      const dt = Math.max(0.5, (now - KF.t) / 1000);
+      const jump = haversine({ lat: KF.lat, lng: KF.lng }, { lat, lng });
+      const allowed = gpsMaxSpeed() * dt + acc + Math.sqrt(KF.var) + 30;
+      if (jump > allowed && KF.rejects < 3) { KF.rejects++; return gpsQuality(acc, true); }   // after 3 in a row, trust the GPS again
+      const q = Math.max(1, speed > 0 ? speed : 3);                                // how far the true position can drift per second
+      KF.var += dt * q * q;
+      if (jump > allowed) KF.var = acc * acc;                                      // re-anchor after a real jump
+      const k = KF.var / (KF.var + acc * acc);
+      KF.lat += k * (lat - KF.lat); KF.lng += k * (lng - KF.lng); KF.var = (1 - k) * KF.var;
+    } else { KF.lat = lat; KF.lng = lng; KF.var = acc * acc; }
+    KF.t = now; KF.rejects = 0;
+    if (acc <= 50) KF.lastGood = now;
+    gpsQuality(acc, false);
+    onPosition(KF.lat, KF.lng, Math.min(acc, Math.sqrt(KF.var) * 1.5 || acc), speed, heading, acc);
+  }
+  function gpsQuality(acc, rejected) {
+    const q = acc <= 15 ? 'good' : acc <= 50 ? 'fair' : 'poor';
+    S._gpsQ = { acc: Math.round(acc), q, rejected, at: Date.now() };
+    const el = $('gpsQ'); if (!el) return;
+    el.className = 'gpsq ' + q; el.textContent = `GPS ${q === 'good' ? '●●●' : q === 'fair' ? '●●○' : '●○○'} ±${Math.round(acc)} m`;
+    el.title = rejected ? 'Inaccurate GPS reading ignored' : '';
+  }
+  function onPosition(lat, lng, acc, speed, heading, rawAcc = acc) {
     const now = Date.now();
     S.lastFix = now; S.me = { lat, lng };
     if (S.tracking) S._fixes = (S._fixes || 0) + 1;
@@ -2108,7 +2184,12 @@
       else if (!S._eta) { $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA'; }
     }
     $('bar').style.width = Math.min(100, Math.max(0, (1 - (d - S.radius) / (S.startDist - S.radius)) * 100)) + '%';
-    status(acc > 150 ? `Weak GPS (±${Math.round(acc)} m), so the distance may be off.` : `Tracking · GPS ±${Math.round(acc)} m`, acc > 150);
+    status(rawAcc > 150 ? `Weak GPS (±${Math.round(rawAcc)} m), so the distance may be off.` : `Tracking · GPS ±${Math.round(rawAcc)} m`, rawAcc > 150);
+    if (S._good == null) S._good = 0;
+    if (rawAcc <= 60) S._good++;
+    // distance actually travelled (for verified trips / coins): only from good fixes
+    if (rawAcc <= 60) { if (S._lastGoodPt) { const dd = haversine(S._lastGoodPt, S.me); if (dd > 8) { S._travelled += dd; S._lastGoodPt = S.me; } } else { S._lastGoodPt = S.me; if (!S._firstPt) S._firstPt = S.me; } }
+    if (!S._tripDone && d <= Math.max(S.radius, 300)) tripEnd('arrived');
 
     // ---- stops to go ----
     const P = routeProgress(S.me);
@@ -2141,13 +2222,15 @@
 
     // ---- N stops early alarm ----
     const R = S._route, k = S._k;
-    if (R && k > 0 && !S.alarmed) {
-      const cands = R.fixedDir ? [S.dest.idx - k] : [S.dest.idx - k, S.dest.idx + k];
+    if (R && k > 0 && !S.alarmed && rawAcc <= 100) {
+      // direction known: only the stop k before yours in that direction
+      const cands = R.fixedDir ? [S.dest.idx - k] : S._dir ? [S.dest.idx - k * S._dir] : [S.dest.idx - k, S.dest.idx + k];
       for (const c of cands) {
         if (c < 0 || c >= R.list.length) continue;
         const dc = haversine(S.me, R.list[c]);
+        if (S._fixes < 3) { if (dc <= R.trig * 2) S.armed[c] = false; continue; }   // first fixes only disarm
         if (dc > R.trig * 2) S.armed[c] = true;              // only after we've been away from it
-        if (S.armed[c] && dc <= R.trig) {
+        if (S.armed[c] && dc <= R.trig && S._fixes >= 3) {
           S.alarmed = true;
           fireAlarm(k === 1 ? 'Your stop is next!' : `Your stop is in ${k} stops!`,
             `Now at ${R.list[c].name}. Get off at ${S.dest.name}.`);
@@ -2158,7 +2241,7 @@
     // ---- distance alarm (always on) ----
     // A trip started inside (or right at) the alarm circle used to ring at once and keep ringing.
     // Now each alarm is armed only after a good fix shows you clearly outside its circle.
-    const good = acc == null || acc <= Math.max(120, S.radius * 0.6);
+    const good = rawAcc == null || rawAcc <= Math.max(120, S.radius * 0.6);
     if (good && d > S.radius * 1.2) S._distArmed = true;
     if (good && d > S.radius * 2.2) S._warnArmed = true;
     if (!S._distArmed && !S.alarmed && d <= S.radius && S._fixes <= 2) status(`You are already within ${fmtM(S.radius)} of ${S.dest.name}. The alarm will not ring here.`, true);
@@ -2180,7 +2263,10 @@
     await setupNotifications();
     Object.assign(S, { tracking: true, alarmed: false, warned: false, startDist: null, speeds: [], prev: null, armed: {}, _dir: null,
       _delay: 1, _eta: null, _lastNext: null, _stn: { state: 'none' }, _samples: [], _boarded: false, _vh: [], _busWaitFor: null, _busNextAt: 0,
-      _fixes: 0, _startedAt: Date.now(), lastFix: 0, _distArmed: false, _warnArmed: false, _railTrip: null, _upAt: 0 });
+      _fixes: 0, _startedAt: Date.now(), lastFix: 0, _distArmed: false, _warnArmed: false, _railTrip: null, _upAt: 0,
+      _travelled: 0, _lastGoodPt: null, _firstPt: null, _good: 0, _tripId: null, _tripDone: false });
+    resetGpsFilter();
+    tripStart();
     $('motion').classList.remove('on');
     loadLearned();
     $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA';
@@ -2207,13 +2293,13 @@
             else onGeoError(err);
             return;
           }
-          onPosition(loc.latitude, loc.longitude, loc.accuracy, loc.speed, loc.bearing);
+          onFix(loc.latitude, loc.longitude, loc.accuracy, loc.speed, loc.bearing, loc.time);
         });
       } catch (e) { onGeoError(e); }
     } else if ('geolocation' in navigator) {
       S.watchId = navigator.geolocation.watchPosition(
-        p => onPosition(p.coords.latitude, p.coords.longitude, p.coords.accuracy, p.coords.speed, p.coords.heading),
-        onGeoError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 30000 });
+        p => onFix(p.coords.latitude, p.coords.longitude, p.coords.accuracy, p.coords.speed, p.coords.heading, p.timestamp),
+        onGeoError, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
       keepAwake();
       toast('Keep this screen open. The app keeps it awake for you.');
     } else status('This device has no GPS / location support.', true);
@@ -2224,6 +2310,7 @@
     }, 10000);
   }
   async function stopTracking(msg) {
+    if (S.tracking && !S._tripDone) tripEnd('stopped');
     S.tracking = false;
     $('upcoming').classList.remove('on');
     clearInterval(etaTicker); cancelBackupAlarm(); flushSamples(); if (!S.plan) renderPlanStrip();
@@ -2431,8 +2518,10 @@
     box.innerHTML = `<div class="ctop"><div class="cbig">🪙 ${c.coins} <small>coins</small></div>
         <div class="lv"><b>Level ${c.level}</b>${c.rank ? '#' + c.rank + ' of all riders' : ''}</div></div>
       <div class="lvbar"><i style="width:${pct}%"></i></div><div class="fine" style="margin:0">${c.nextLevelAt - c.earned} more to level ${c.level + 1}</div>
-      <ul>${c.rules.map(r => `<li class="${r.doneToday >= r.max ? 'done' : ''}"><span>${esc(r.label)}</span><b>+${r.coins}</b><small>${r.once ? (r.doneToday ? '✓' : 'once') : r.doneToday + '/' + r.max}</small></li>`).join('')}</ul>
-      ${user ? '' : '<p class="fine">Sign up to keep your coins on all your phones (+100 bonus).</p>'}`;
+      <ul>${c.rules.map(r => `<li class="${r.doneToday >= r.max ? 'done' : ''}"><span>${esc(r.label)}<small style="display:block;opacity:.7;font-size:11px">${esc(r.note || '')}</small></span><b>+${r.coins}${r.perKm ? '+' : ''}</b><small>${r.doneToday + '/' + r.max} today</small></li>`).join('')}</ul>
+      ${c.trips && c.trips.length ? `<h4>🧾 My recent trips</h4><ul class="trips">${c.trips.map(t => `<li class="${t.coins ? '' : 'no'}"><span>${esc(t.dest || '?')}<small>${esc(t.when)} · ${t.km} km · ${t.min} min · ${esc(t.status === 'arrived' ? (t.coins ? 'reached' : 'reached, ' + (t.why || 'no coins')) : t.status === 'open' ? 'in progress' : 'stopped early')}</small></span><b>${t.coins ? '+' + t.coins : '0'}</b><small>🪙</small></li>`).join('')}</ul>` : ''}
+      ${c.top && c.top.length ? `<h4>🏆 Top riders</h4><ul>${c.top.map((t, i) => `<li class="${t.me ? 'done' : ''}"><span>${['🥇', '🥈', '🥉'][i] || (i + 1) + '.'} ${esc(t.name)}${t.me ? ' (you)' : ''}</span><b>${t.earned}</b><small>🪙</small></li>`).join('')}</ul>` : ''}
+      ${user ? '' : '<p class="fine">Sign up to keep your coins on all your phones.</p>'}`;
   }
 
   // ================= Theme =================

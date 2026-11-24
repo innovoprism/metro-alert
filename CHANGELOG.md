@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.1.0 (2026-11-24)
+- **Coins only for reaching your stop.** Coins are no longer given for opening the app, starting a trip, planning, sharing, test alarms or sign-up. A tracked trip earns 10 coins + 2 per km (max 40, up to 4 trips a day) only when the server confirms it: it ended at the stop, lasted a believable time, actually moved (from GPS) and was at least 700 m. Starting and stopping a trip gives nothing. **All balances were reset to 0** because the old ones were counted wrongly (the old records are kept on the server).
+- **My recent trips** (with the coins each earned, or why not) and a **Top riders** board in Settings and Profile.
+- **Admin page:** trips started, reached and stopped today, coins given, and the latest 50 trips with rider, distance, time, result and reason.
+- **More accurate GPS:** old cached positions from before Start are ignored, poor readings (±200 m+) and impossible jumps are dropped, and the position is smoothed by accuracy. A GPS quality badge (●●● ±8 m) shows while tracking.
+- **Fix: sound at Start.** The app no longer plays the alarm tune (muted) to unlock audio at Start, which some phones let through and could keep looping; it uses a silent clip. The "N stops early" alarm only arms from good GPS readings and in your direction of travel, so a jumpy first fix can't set it off. An alarm left over from a trip that was never stopped is silenced when the app opens.
+
 ## v2.0.0 (2026-11-24)
 - **Fix: beeping right after Start.** If you started a trip already inside the alarm circle (or with a poor first GPS fix), the alarm could ring at once and keep going. Now each alarm only arms after a good fix shows you clearly outside its circle; the timetable backup alarm waits until the trip has settled (a minute and a few fixes); and the fallback beeps always stop with the alarm.
 - **🚆 Etihad Rail:** Fujairah, Al Dhaid, Dubai Al Yalayis (walk about 400 m from Jumeirah Golf Estates Metro) and Abu Dhabi MBZ City, shown as a dashed line. Track a train trip with the ETA taken from the published timetable, a 2.5 km alarm distance, and a "next trains" board for every station (weekday and weekend timetables).

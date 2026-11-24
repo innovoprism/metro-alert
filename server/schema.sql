@@ -63,3 +63,15 @@ CREATE TABLE IF NOT EXISTS wallet (owner TEXT PRIMARY KEY, coins INTEGER NOT NUL
 -- what was earned per day and reason (enforces daily limits; day '-' = one-time rewards)
 CREATE TABLE IF NOT EXISTS coin_log (day TEXT NOT NULL, owner TEXT NOT NULL, reason TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (day, owner, reason));
+
+-- Verified trips (v2.1): coins are only given when a tracked trip really reaches its stop
+CREATE TABLE IF NOT EXISTS trips (id TEXT PRIMARY KEY, owner TEXT, install TEXT, platform TEXT, kind TEXT, dest TEXT, line TEXT,
+  started INTEGER NOT NULL, ended INTEGER, from_lat REAL, from_lng REAL, to_lat REAL, to_lng REAL,
+  status TEXT NOT NULL DEFAULT 'open', travelled INTEGER, coins INTEGER NOT NULL DEFAULT 0, why TEXT, day TEXT);
+CREATE INDEX IF NOT EXISTS trips_owner ON trips (owner, started);
+CREATE INDEX IF NOT EXISTS trips_day ON trips (day);
+-- one-time: coins from v1.9/v2.0 were counted for opening the app, starting trips and test alarms.
+-- Reset every balance; the old log rows are kept, renamed v1_<reason>.
+UPDATE wallet SET coins = 0, earned = 0 WHERE NOT EXISTS (SELECT 1 FROM meta WHERE k = 'coins_v2');
+UPDATE coin_log SET reason = 'v1_' || reason WHERE reason NOT LIKE 'v1_%' AND NOT EXISTS (SELECT 1 FROM meta WHERE k = 'coins_v2');
+INSERT OR IGNORE INTO meta (k, v) VALUES ('coins_v2', datetime('now'));

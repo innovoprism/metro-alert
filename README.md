@@ -102,6 +102,10 @@ One-time setup:
 
 Stats: open `https://metro-alert.<you>.workers.dev/stats` and enter your STATS_KEY.
 
+## Coins
+
+Coins are given by the server only for a verified trip (`/api/trip/start` and `/api/trip/end`): it must end within 700 m of the stop (3 km for Etihad Rail), be at least 700 m long, take a believable time and show real movement from GPS. 10 coins + 2 per km, max 40, up to 4 a day. The admin page lists every trip and why it did or didn't earn coins.
+
 ## Accounts
 Optional email + password accounts (server `/api/auth/*`, `/api/me`). Passwords are stored as salted PBKDF2-SHA256 hashes; 10 wrong passwords lock the account for 15 minutes. Saved stops sync between devices. There is no password-reset email yet (it needs an email-sending service). Collecting emails means you should publish a short privacy policy before listing the app in a store.
 

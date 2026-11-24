@@ -1,5 +1,5 @@
 // Offline support: app shell is cached per version; map tiles are cached as you view them.
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const SHELL = 'metro-alert-shell-' + VERSION;
 const TILES = 'metro-alert-tiles-v1';
 const ASSETS = ['./', 'index.html', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon.svg',
