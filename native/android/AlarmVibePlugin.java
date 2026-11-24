@@ -34,6 +34,52 @@ public class AlarmVibePlugin extends Plugin {
     private int savedAlarmVolume = -1;
     private PowerManager.WakeLock wakeLock;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private static AlarmVibePlugin instance;
+
+    @Override
+    public void load() { instance = this; }
+
+    /** "I'm getting off" on the notification: stop the in-app vibration/sound too */
+    static void stopFromOutside() {
+        AlarmVibePlugin p = instance;
+        if (p != null) p.handler.post(p::stopAll);
+    }
+
+    @PluginMethod
+    public void ring(PluginCall call) {
+        AlarmReceiver.ring(getContext(), call.getString("title"), call.getString("body"),
+                call.getString("tune", "classic"), call.getBoolean("sound", true));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void cancelRing(PluginCall call) {
+        AlarmReceiver.stopRing(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void schedule(PluginCall call) {
+        long at = (long) (double) call.getDouble("at", 0.0);
+        AlarmReceiver.schedule(getContext(), at, call.getString("title"), call.getString("body"),
+                call.getString("tune", "classic"), call.getBoolean("sound", true));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void cancelSchedule(PluginCall call) {
+        AlarmReceiver.cancelSchedule(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void status(PluginCall call) {
+        com.getcapacitor.JSObject r = new com.getcapacitor.JSObject();
+        r.put("ringing", AlarmReceiver.ringing);
+        r.put("lastDismissed", AlarmReceiver.lastDismissed);
+        r.put("lastRung", AlarmReceiver.lastRung);
+        call.resolve(r);
+    }
     private final Runnable autoStop = this::stopAll;
     private final Runnable keepRinging = new Runnable() {
         @Override public void run() {

@@ -21,7 +21,19 @@ const CORS = {
   'Access-Control-Max-Age': '86400',
 };
 const PLATFORMS = new Set(['web', 'android', 'ios']);
-const EVENTS = new Set(['trip-metro', 'trip-bus', 'trip-stop', 'trip-pin', 'alarm', 'install', 'update']);
+const EVENTS = new Set(['trip-metro', 'trip-bus', 'trip-stop', 'trip-pin', 'alarm', 'install', 'update', 'share', 'plan']);
+// coins: amount per action and the most that can be earned per day for it (once = only ever once)
+const REWARDS = {
+  welcome: { coins: 50, once: true, label: 'Welcome bonus' },
+  signup: { coins: 100, once: true, label: 'Created an account' },
+  daily: { coins: 5, perDay: 1, label: 'Opened the app today' },
+  trip: { coins: 5, perDay: 4, label: 'Started a trip' },
+  arrived: { coins: 10, perDay: 4, label: 'Woke up at your stop' },
+  plan: { coins: 3, perDay: 3, label: 'Planned a journey' },
+  share: { coins: 5, perDay: 2, label: 'Shared your ETA' },
+  timing: { coins: 1, perDay: 20, label: 'Helped learn train times' },
+};
+const EVENT_REWARD = { 'trip-metro': 'trip', 'trip-bus': 'trip', 'trip-stop': 'trip', 'trip-pin': 'trip', alarm: 'arrived', share: 'share', plan: 'plan', install: 'welcome' };
 const BUCKET_RE = /^(wd|we)-(n|e|am|md|pm|ev)$/;
 const ID_RE = /^[0-9a-f-]{16,40}$/i;
 
@@ -42,7 +54,8 @@ export default {
       if (p === '/api/auth/login' && req.method === 'POST') return await login(await req.json(), env);
       if (p === '/api/auth/logout' && req.method === 'POST') return await logout(req, env);
       if (p === '/api/me') return await me(req, env);
-      if (p === '/api/samples' && req.method === 'POST') return await samples(await req.json(), env);
+      if (p === '/api/coins') return await coinsRoute(url, req, env);
+      if (p === '/api/samples' && req.method === 'POST') return await samples(await req.json(), env, await sessionUser(req, env));
       if (p === '/api/timings') return await timings(url, env);
       if (p === '/api/departures') return await departures(url, env);
       if (p === '/api/version') return await version(env, ctx);
@@ -73,9 +86,10 @@ async function hello(b, env, ctx, user) {
     env.DB.prepare('INSERT OR IGNORE INTO active (day, id, platform) VALUES (?1, ?2, ?3)').bind(day, id, platform),
     ...(user ? [env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(id, user.id)] : []),
   ]);
+  const gained = await award(env, ownerOf(user, id), 'daily');
   // keep the daily-active table small (> 400 days old is not needed)
   if (Math.random() < 0.01) ctx.waitUntil(env.DB.prepare('DELETE FROM active WHERE day < ?1').bind(dubaiDay(400)).run());
-  return json({ ok: true });
+  return json({ ok: true, gained });
 }
 
 async function event(b, env, user) {
@@ -85,7 +99,58 @@ async function event(b, env, user) {
                         ON CONFLICT(day, platform, name) DO UPDATE SET n = n + 1`).bind(dubaiDay(), platform, name).run();
   if (user && name.startsWith('trip-')) await env.DB.prepare('UPDATE users SET trips = trips + 1 WHERE id = ?1').bind(user.id).run();
   if (user && name === 'alarm') await env.DB.prepare('UPDATE users SET alarms = alarms + 1 WHERE id = ?1').bind(user.id).run();
-  return json({ ok: true });
+  const gained = EVENT_REWARD[name] ? await award(env, ownerOf(user, str(b.id, 40)), EVENT_REWARD[name]) : 0;
+  return json({ ok: true, gained });
+}
+
+// ---------------------------------------------------------------- coins
+const ownerOf = (user, id) => (user ? 'u:' + user.id : ID_RE.test(id || '') ? 'i:' + id : null);
+// award coins for `reason` (n times), respecting the daily / one-time limits; returns coins added
+async function award(env, owner, reason, n = 1) {
+  const r = REWARDS[reason];
+  if (!owner || !r) return 0;
+  const day = r.once ? '-' : dubaiDay();
+  const max = r.once ? 1 : r.perDay;
+  const row = await env.DB.prepare('SELECT n FROM coin_log WHERE day = ?1 AND owner = ?2 AND reason = ?3').bind(day, owner, reason).first();
+  const take = Math.min(n, max - (row ? row.n : 0));
+  if (take <= 0) return 0;
+  const add = take * r.coins;
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO coin_log (day, owner, reason, n) VALUES (?1, ?2, ?3, ?4)
+                    ON CONFLICT(day, owner, reason) DO UPDATE SET n = n + ?4`).bind(day, owner, reason, take),
+    env.DB.prepare(`INSERT INTO wallet (owner, coins, earned, updated) VALUES (?1, ?2, ?2, ?3)
+                    ON CONFLICT(owner) DO UPDATE SET coins = coins + ?2, earned = earned + ?2, updated = ?3`).bind(owner, add, dubaiDay()),
+  ]);
+  return add;
+}
+// when someone logs in / signs up, the coins this phone earned without an account move to the account
+async function moveInstallCoins(env, installId, userId) {
+  if (!ID_RE.test(installId || '')) return;
+  const from = 'i:' + installId, to = 'u:' + userId;
+  const w = await env.DB.prepare('SELECT coins, earned FROM wallet WHERE owner = ?1').bind(from).first();
+  if (!w || (!w.coins && !w.earned)) return;
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO wallet (owner, coins, earned, updated) VALUES (?1, ?2, ?3, ?4)
+                    ON CONFLICT(owner) DO UPDATE SET coins = coins + ?2, earned = earned + ?3, updated = ?4`).bind(to, w.coins, w.earned, dubaiDay()),
+    env.DB.prepare('DELETE FROM wallet WHERE owner = ?1').bind(from),
+    env.DB.prepare('UPDATE coin_log SET owner = ?2 WHERE owner = ?1 AND NOT EXISTS (SELECT 1 FROM coin_log c2 WHERE c2.day = coin_log.day AND c2.owner = ?2 AND c2.reason = coin_log.reason)').bind(from, to),
+  ]);
+}
+const level = earned => Math.floor(Math.sqrt(earned / 25)) + 1;      // 0, 25, 100, 225, 400… coins
+async function coinsInfo(env, owner) {
+  const w = owner && await env.DB.prepare('SELECT coins, earned FROM wallet WHERE owner = ?1').bind(owner).first();
+  const today = owner ? (await env.DB.prepare("SELECT reason, n FROM coin_log WHERE owner = ?1 AND (day = ?2 OR day = '-')").bind(owner, dubaiDay()).all()).results : [];
+  const coins = w ? w.coins : 0, earned = w ? w.earned : 0, lv = level(earned);
+  const rank = owner ? (await env.DB.prepare('SELECT COUNT(*) + 1 r FROM wallet WHERE earned > ?1').bind(earned).first()).r : null;
+  return { coins, earned, level: lv, nextLevelAt: 25 * lv * lv, rank,
+    rules: Object.entries(REWARDS).map(([k, r]) => ({ id: k, label: r.label, coins: r.coins, max: r.once ? 1 : r.perDay, once: !!r.once,
+      doneToday: (today.find(t => t.reason === k) || {}).n || 0 })) };
+}
+async function coinsRoute(url, req, env) {
+  const user = await sessionUser(req, env);
+  const owner = ownerOf(user, url.searchParams.get('id'));
+  if (!owner) return json({ error: 'id required' }, 400);
+  return json(await coinsInfo(env, owner));
 }
 
 // ---------------------------------------------------------------- accounts
@@ -133,6 +198,8 @@ async function signup(b, env) {
     .bind(email, name, await hashPassword(password, salt), salt, dubaiDay()).run();
   const id = r.meta.last_row_id;
   if (ID_RE.test(str(b.id, 40))) await env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(b.id, id).run();
+  await moveInstallCoins(env, str(b.id, 40), id);
+  await award(env, 'u:' + id, 'signup');
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?1').bind(id).first();
   return json({ token: await newSession(env, id), user: publicUser(user) });
 }
@@ -150,6 +217,7 @@ async function login(b, env) {
   }
   await env.DB.prepare('UPDATE users SET fails = 0, locked_until = 0 WHERE id = ?1').bind(u.id).run();
   if (ID_RE.test(str(b.id, 40))) await env.DB.prepare('INSERT OR REPLACE INTO install_user (id, user_id) VALUES (?1, ?2)').bind(b.id, u.id).run();
+  await moveInstallCoins(env, str(b.id, 40), u.id);
   return json({ token: await newSession(env, u.id), user: publicUser(u) });
 }
 async function logout(req, env) {
@@ -166,6 +234,8 @@ async function me(req, env) {
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?1').bind(u.id),
       env.DB.prepare('DELETE FROM install_user WHERE user_id = ?1').bind(u.id),
       env.DB.prepare('DELETE FROM users WHERE id = ?1').bind(u.id),
+      env.DB.prepare('DELETE FROM wallet WHERE owner = ?1').bind('u:' + u.id),
+      env.DB.prepare('DELETE FROM coin_log WHERE owner = ?1').bind('u:' + u.id),
     ]);
     return json({ ok: true });
   }
@@ -185,7 +255,7 @@ async function me(req, env) {
 // ---------------------------------------------------------------- learned train timings
 // Each sample updates a running average for (segment, time bucket). Outliers (a broken-down train,
 // a GPS glitch) are ignored once a segment has enough samples.
-async function samples(b, env) {
+async function samples(b, env, user) {
   const list = Array.isArray(b.samples) ? b.samples.slice(0, 50) : [];
   const day = dubaiDay();
   const stmts = [];
@@ -206,7 +276,8 @@ async function samples(b, env) {
       WHERE n < 3 OR (excluded.run >= 0.5 * run AND excluded.run <= 2.0 * run)`).bind(key, bucket, run, dw, day));
   }
   if (stmts.length) await env.DB.batch(stmts);
-  return json({ ok: true, accepted: stmts.length });
+  const gained = stmts.length ? await award(env, ownerOf(user, str(b.id, 40)), 'timing', stmts.length) : 0;
+  return json({ ok: true, accepted: stmts.length, gained });
 }
 
 async function timings(url, env) {
@@ -292,12 +363,19 @@ async function stats(env) {
   const acc = (await q('SELECT COUNT(*) total, SUM(CASE WHEN created >= ?1 THEN 1 ELSE 0 END) new30 FROM users', d30))[0];
   const users = await q(`
     SELECT u.name, u.email, u.created, u.trips, u.alarms,
+      COALESCE((SELECT w.coins FROM wallet w WHERE w.owner = 'u:' || u.id), 0) AS coins,
+      COALESCE((SELECT w.earned FROM wallet w WHERE w.owner = 'u:' || u.id), 0) AS earned,
       (SELECT MAX(i.last_seen) FROM install_user iu JOIN installs i ON i.id = iu.id WHERE iu.user_id = u.id) AS last_seen,
       (SELECT GROUP_CONCAT(DISTINCT i.platform) FROM install_user iu JOIN installs i ON i.id = iu.id WHERE iu.user_id = u.id) AS platforms,
       (SELECT COUNT(*) FROM install_user iu WHERE iu.user_id = u.id) AS devices,
       (SELECT COUNT(*) FROM sessions se WHERE se.user_id = u.id AND se.expires > ?1) AS sessions
     FROM users u ORDER BY COALESCE(last_seen, u.created) DESC, u.id DESC LIMIT 1000`, Date.now());
   const loggedIn = users.filter(u => u.sessions > 0).length;
+  const coinTot = (await q(`SELECT COALESCE(SUM(earned), 0) earned, COALESCE(SUM(coins), 0) coins, COUNT(*) wallets,
+                                   SUM(CASE WHEN owner LIKE 'i:%' THEN 1 ELSE 0 END) anon FROM wallet`))[0];
+  const coinToday = (await q(`SELECT c.reason, SUM(c.n) n FROM coin_log c WHERE c.day = ?1 GROUP BY c.reason`, d0));
+  const topAnon = await q(`SELECT w.owner, w.coins, w.earned, i.platform, i.last_seen FROM wallet w LEFT JOIN installs i ON 'i:' || i.id = w.owner
+                           WHERE w.owner LIKE 'i:%' ORDER BY w.earned DESC LIMIT 20`);
   const byP = rows => Object.fromEntries(['web', 'android', 'ios'].map(p => [p, (rows.find(r => r.platform === p) || {}).n || 0]));
   const days = [];
   for (let i = 29; i >= 0; i--) {
@@ -306,7 +384,8 @@ async function stats(env) {
       active: byP(actDays.filter(r => r.day === d)), new: byP(newDays.filter(r => r.day === d)) });
   }
   return { today: d0, users: byP(total), activeToday: byP(act1), active7: byP(act7), active30: byP(act30),
-    days, versions, events: ev, learned: learned[0], accounts: { total: acc.total || 0, new30: acc.new30 || 0, loggedIn }, userList: users };
+    days, versions, events: ev, learned: learned[0], accounts: { total: acc.total || 0, new30: acc.new30 || 0, loggedIn }, userList: users,
+    coins: { ...coinTot, today: coinToday, topAnon: topAnon.map(a => ({ ...a, owner: a.owner.slice(2, 10) + '…' })) } };
 }
 
 const html = (body, status = 200) => new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
@@ -349,10 +428,16 @@ function dashboard(s) {
 <h2>App versions in use (last 30 days)</h2><table><tr><th>Platform</th><th>Version</th><th>Users</th></tr>${verRows}</table>
 <h2>Registered users (${s.userList.length})</h2>
 <input id="uq" placeholder="Search name or email…" style="width:100%;box-sizing:border-box;height:40px;border-radius:10px;border:1px solid #d1d5db;padding:0 12px;font-size:15px;margin-bottom:8px">
-<div style="overflow-x:auto"><table id="ut"><tr><th>Name</th><th>Email</th><th>Signed up</th><th>Last seen</th><th>Devices</th><th>Logged in</th><th>Trips</th><th>Alarms</th></tr>${
-  s.userList.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.created)}</td><td>${esc(u.last_seen || '–')}</td><td>${u.devices}${u.platforms ? ' · ' + esc(u.platforms.replace(/,/g, ', ')) : ''}</td><td>${u.sessions > 0 ? '✅ ' + u.sessions + (u.sessions > 1 ? ' devices' : '') : '–'}</td><td>${u.trips}</td><td>${u.alarms}</td></tr>`).join('') || '<tr><td colspan=8 class="muted">No accounts yet</td></tr>'
+<div style="overflow-x:auto"><table id="ut"><tr><th>Name</th><th>Email</th><th>Signed up</th><th>Last seen</th><th>Devices</th><th>Logged in</th><th>Trips</th><th>Alarms</th><th>🪙 Coins</th><th>Level</th></tr>${
+  s.userList.map(u => `<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td><td>${esc(u.created)}</td><td>${esc(u.last_seen || '–')}</td><td>${u.devices}${u.platforms ? ' · ' + esc(u.platforms.replace(/,/g, ', ')) : ''}</td><td>${u.sessions > 0 ? '✅ ' + u.sessions + (u.sessions > 1 ? ' devices' : '') : '–'}</td><td>${u.trips}</td><td>${u.alarms}</td><td><b>${u.coins}</b>${u.earned !== u.coins ? ` <span class="muted">(${u.earned} earned)</span>` : ''}</td><td>${level(u.earned)}</td></tr>`).join('') || '<tr><td colspan=10 class="muted">No accounts yet</td></tr>'
 }</table></div>
 <script>document.getElementById('uq').oninput=e=>{const q=e.target.value.toLowerCase();document.querySelectorAll('#ut tr').forEach((r,i)=>{if(i)r.style.display=r.textContent.toLowerCase().includes(q)?'':'none'})}</script>
+<h2>🪙 Coins</h2>
+<div class="grid" style="margin-top:0"><div class="card"><small>Coins earned by everyone</small><b>${s.coins.earned}</b><small>${s.coins.coins} still held · ${s.coins.wallets} wallets (${s.coins.anon} without account)</small></div>
+<div class="card"><small>Earned today, by reason</small><div class="split">${s.coins.today.map(t => `${esc(t.reason)} × ${t.n}`).join(' · ') || '–'}</div></div></div>
+<h2>Top users without an account</h2><table><tr><th>Install</th><th>Platform</th><th>Last seen</th><th>Coins</th><th>Level</th></tr>${
+  s.coins.topAnon.map(a => `<tr><td>${esc(a.owner)}</td><td>${esc(a.platform || '–')}</td><td>${esc(a.last_seen || '–')}</td><td><b>${a.coins}</b></td><td>${level(a.earned)}</td></tr>`).join('') || '<tr><td colspan=5 class="muted">None yet</td></tr>'
+}</table>
 <h2>Learned train/bus timings</h2><div class="card"><b>${s.learned.segments}</b><small>stop-to-stop segments learned from ${s.learned.samples} real rides</small></div>`);
 }
 function loginPage() {

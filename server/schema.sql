@@ -57,3 +57,9 @@ CREATE TABLE IF NOT EXISTS bus_dep (
   PRIMARY KEY (stop, route, dir)
 );
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+
+-- Coins (rewards). owner = 'u:<user id>' for accounts, 'i:<install id>' for people without an account.
+CREATE TABLE IF NOT EXISTS wallet (owner TEXT PRIMARY KEY, coins INTEGER NOT NULL DEFAULT 0, earned INTEGER NOT NULL DEFAULT 0, updated TEXT);
+-- what was earned per day and reason (enforces daily limits; day '-' = one-time rewards)
+CREATE TABLE IF NOT EXISTS coin_log (day TEXT NOT NULL, owner TEXT NOT NULL, reason TEXT NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (day, owner, reason));

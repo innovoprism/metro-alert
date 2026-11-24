@@ -14,23 +14,29 @@ if (target === 'android') {
     'android.permission.FOREGROUND_SERVICE_LOCATION',
     'android.permission.POST_NOTIFICATIONS',
     'android.permission.VIBRATE',
-    'android.permission.WAKE_LOCK'
+    'android.permission.WAKE_LOCK',
+    'android.permission.USE_FULL_SCREEN_INTENT',
+    'android.permission.SCHEDULE_EXACT_ALARM'
   ];
   for (const p of perms) {
     if (!x.includes(`"${p}"`)) x = x.replace('</manifest>', `    <uses-permission android:name="${p}" />\n</manifest>`);
   }
+  if (!x.includes('.AlarmReceiver')) x = x.replace('</application>', '        <receiver android:name=".AlarmReceiver" android:exported="false" />\n    </application>');
   fs.writeFileSync(f, x);
   console.log('Patched AndroidManifest.xml');
 
   // Native wake-up alarm (continuous vibration + looping alarm tone), see native/android/
   const appId = require('../capacitor.config.json').appId;
   const javaDir = path.join(root, 'android/app/src/main/java', ...appId.split('.'));
-  const plugin = fs.readFileSync(path.join(root, 'native/android/AlarmVibePlugin.java'), 'utf8')
-    .replace(/^package [^;]+;/m, `package ${appId};`);
-  fs.writeFileSync(path.join(javaDir, 'AlarmVibePlugin.java'), plugin);
+  for (const jf of fs.readdirSync(path.join(root, 'native/android')).filter(n => n.endsWith('.java'))) {
+    const src = fs.readFileSync(path.join(root, 'native/android', jf), 'utf8').replace(/^package [^;]+;/m, `package ${appId};`);
+    fs.writeFileSync(path.join(javaDir, jf), src);
+  }
   const mainF = path.join(javaDir, 'MainActivity.java');
   fs.writeFileSync(mainF, `package ${appId};
 
+import android.content.Intent;
+import android.os.Build;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
 
@@ -39,6 +45,20 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(AlarmVibePlugin.class);
         super.onCreate(savedInstanceState);
+        showOverLockScreen(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        showOverLockScreen(intent);
+    }
+
+    // opened by the wake-up alarm: show the alarm screen over the lock screen and turn the screen on
+    private void showOverLockScreen(Intent i) {
+        if (i == null || !i.getBooleanExtra("metroAlarm", false) || Build.VERSION.SDK_INT < 27) return;
+        setShowWhenLocked(true);
+        setTurnScreenOn(true);
     }
 }
 `);

@@ -206,6 +206,8 @@
   html[data-theme=dark] :is(.sheet, .search input, .iconbtn, #results, .chip, .field, .sec, .opt, .pcard, .stats2 div, .depstop, .planft, .phead, .fld input, .lbtn, .dirs button, .nearbtn, .seg button.on, .tune button, .stat, .item.sel) { background-color: #1c1f26; color: var(--ink); }
   html[data-theme=dark] :is(.panel, .seg, .tab, .btn.ghost, .change, .pclose, .clk, .chip.recent) { background-color: #232733; color: var(--ink); }
   html[data-theme=dark] .tab.on { background: #f3f4f6; color: #111318; }
+  html[data-theme=dark] .btn.stop { background: #f3f4f6; color: #111318; }
+  html[data-theme=dark] :is(.chip.on, .toast, .opt .tag) { background: #e5e7eb; color: #111318; border-color: #e5e7eb; }
   html[data-theme=dark] .nextbox { background: #000; }
   html[data-theme=dark] .item:hover { background: #232733; }
   html[data-theme=dark] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
@@ -215,6 +217,14 @@
   html[data-theme=dark] .motion.brk { background: #3d2f0c; } html[data-theme=dark] .motion.stop { background: #45161a; }
   html[data-theme=dark] .planstrip { background: #3a2a14; }
   html[data-theme=dark] .dest .pin { background: #3a1a20; }
+  .coins .ctop { display: flex; align-items: center; gap: 12px; }
+  .coins .cbig { font-size: 30px; font-weight: 800; } .coins .cbig small { font-size: 14px; color: var(--muted); font-weight: 600; }
+  .coins .lv { margin-left: auto; text-align: right; font-size: 13px; color: var(--muted); } .coins .lv b { display: block; color: #b45309; font-size: 16px; }
+  .coins .lvbar { height: 6px; border-radius: 3px; background: var(--bg); margin: 8px 0 4px; overflow: hidden; }
+  .coins .lvbar i { display: block; height: 100%; background: linear-gradient(90deg, #f59e0b, #E4002B); }
+  .coins ul { list-style: none; margin: 8px 0 0; padding: 0; } .coins li { display: flex; gap: 8px; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--line); }
+  .coins li span { flex: 1; } .coins li b { color: #b45309; } .coins li small { color: var(--muted); min-width: 34px; text-align: right; }
+  .coins li.done { opacity: .5; }
   .upd { position: fixed; left: 10px; right: 10px; top: calc(64px + var(--safe-top)); z-index: 1400; background: #0067B1; color: #fff; border-radius: 14px; padding: 10px 10px 10px 14px; display: none; align-items: center; gap: 8px; font-size: 14px; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
   .upd.on { display: flex; }
   .upd span { flex: 1; }
@@ -270,6 +280,7 @@
   <div class="phead"><b>Settings</b><button class="pclose" id="closeSettings" aria-label="Close">✕</button></div>
   <div class="pbody">
     <div class="sec" id="accountSec"></div>
+    <div class="sec coins" id="coinSec"></div>
 
     <div class="sec">
       <h3>Alarm</h3>
@@ -351,6 +362,7 @@
       <div><b id="profTrips">0</b><span>Trips</span></div><div><b id="profAlarms">0</b><span>Alarms</span></div><div><b id="profSaved">0</b><span>Saved stops</span></div>
     </div>
     <div class="fine" id="profSince"></div>
+    <div class="sec coins" id="profCoins" style="margin-top:12px"></div>
     <label class="fld"><span>Name</span><input id="profNameIn" maxlength="60"></label>
     <div class="err" id="profErr"></div>
     <button class="pbtn" id="profSave">Save</button>
@@ -518,11 +530,16 @@
     return id;
   }
   let nativeVer = '';
-  function track(name) { apiCall('/api/event', { id: installId(), platform, name }); }
+  // coins earned are shown as a small "+10 🪙" toast
+  const gotCoins = (r, why) => { if (r && r.gained > 0) setTimeout(() => toast(`+${r.gained} 🪙 ${why}`), 900); return r; };
+  const EVENT_WHY = { alarm: 'for arriving with Metro Alert', share: 'for sharing', plan: 'for planning', install: 'welcome bonus!' };
+  function track(name) {
+    apiCall('/api/event', { id: installId(), platform, name }).then(r => gotCoins(r, EVENT_WHY[name] || 'for your trip'));
+  }
   function trackOpen() {
     let first = false;
     try { first = !localStorage.getItem('ma_installed'); localStorage.setItem('ma_installed', '1'); } catch {}
-    apiCall('/api/hello', { id: installId(), platform, version: APP_VER, native: nativeVer });
+    apiCall('/api/hello', { id: installId(), platform, version: APP_VER, native: nativeVer }).then(r => gotCoins(r, 'daily bonus'));
     if (first) track('install');
   }
 
@@ -1104,6 +1121,7 @@
     if (!from) { const c = map.getCenter(); from = { lat: c.lat, lng: c.lng }; fromTxt = 'Map centre (turn on location for your position)'; }
     $('planFrom').textContent = fromTxt; $('planTo').textContent = S.dest.name;
     $('plan').classList.add('on');
+    track('plan');
     $('planList').innerHTML = '<p class="fine">Finding routes…</p>';
     setTimeout(() => {
       planRes = planOptions(from, S.dest); planSel = 0;
@@ -1415,12 +1433,19 @@
   // ---- Continuous wake-up vibration: runs non-stop until "I'm getting off" (max 5 min) ----
   let vibeTimer = null, nativeAlarm = false, wakeStop = null;
   const WAKE_MAX_MS = 5 * 60 * 1000;
-  let wakeGen = 0;                                   // bumps on every stop, so a late start can't resurrect the alarm
+  let wakeGen = 0, alarmStartedAt = 0;                                   // bumps on every stop, so a late start can't resurrect the alarm
   async function startWakeVibration() {
     stopWakeVibration();
     const gen = wakeGen;
     nativeAlarm = false;
-    if (AlarmVibe) {
+    if (AlarmVibe && isAndroid) {
+      // the alarm notification repeats its sound + vibration by itself, even with the screen off or the app asleep
+      AlarmVibe.ring({ title: (S.dest && (S.dest.kind === 'bus' || S.dest.kind === 'stop') ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent,
+        body: $('alarmMsg').textContent, tune: S.tune, sound: S.alertMode === 'sound' }).catch(() => {});
+      alarmStartedAt = Date.now();
+      try { await AlarmVibe.start({ sound: false, vibrate: true, maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
+      if (gen !== wakeGen) { AlarmVibe.stop().catch(() => {}); AlarmVibe.cancelRing().catch(() => {}); return; }
+    } else if (AlarmVibe) {
       try { await AlarmVibe.start({ sound: S.alertMode === 'sound', tune: tuneFile(), maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
       if (gen !== wakeGen) { AlarmVibe.stop().catch(() => {}); return; }   // dismissed while starting
     }
@@ -1438,6 +1463,7 @@
   function stopWakeVibration() {
     wakeGen++;
     clearInterval(vibeTimer); vibeTimer = null;
+    if (AlarmVibe && isAndroid) AlarmVibe.cancelRing().catch(() => {});
     stopTuneLoop();
     clearTimeout(wakeStop); wakeStop = null;
     if (AlarmVibe) AlarmVibe.stop().catch(() => {});
@@ -1466,7 +1492,7 @@
       // Android app: the phone's own alarm tone loops natively. Elsewhere: in-app beeps.
       if (!nativeAlarm && S.alertMode === 'sound' && $('alarm').classList.contains('on')) startTuneLoop();
     });
-    if (document.visibilityState !== 'visible' || !isNative) notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
+    if (!isAndroid && (document.visibilityState !== 'visible' || !isNative)) notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
     repeatNotify((isBus ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent, $('alarmMsg').textContent);
     cancelBackupAlarm();
     track('alarm');
@@ -1526,12 +1552,15 @@
     return n;
   }
   // While the alarm is not dismissed, ring again every 30 s (works even if the app is suspended)
-  const REPEAT_IDS = [801, 802, 803, 804, 805, 806];
+  const REPEAT_IDS = [...Array(32)].map((_, i) => 801 + i);
+  // iPhone: an app in the background cannot vibrate non-stop, so the alarm notification is repeated every
+  // 5 s for 2 minutes (each one vibrates and plays the tune), then every 30 s, until "I'm getting off".
+  const burstTimes = start => [...Array(24)].map((_, i) => start + i * 5000).concat([...Array(8)].map((_, i) => start + 120000 + (i + 1) * 30000));
   async function repeatNotify(title, body) {
-    if (!isNative || !LocalNotif) return;
+    if (!isNative || !LocalNotif || isAndroid) return;
     try {
-      const now = Date.now();
-      await LocalNotif.schedule({ notifications: REPEAT_IDS.map((id, i) => nativeNote(id, title, body + ' (reminder)', true, now + (i + 1) * 30000)) });
+      const ts = burstTimes(Date.now() + 5000);
+      await LocalNotif.schedule({ notifications: ts.map((t, i) => nativeNote(REPEAT_IDS[i], title, body, true, t)) });
     } catch {}
   }
   function cancelRepeatNotify() {
@@ -1540,20 +1569,37 @@
   // Timetable backup: if the phone loses GPS (tunnel) or iOS pauses the app, this pre-scheduled
   // notification still wakes you at the time the RTA timetable says you reach your alarm stop.
   const BACKUP_ID = 900; let backupAt = 0;
+  const BACKUP_IDS = [...Array(12)].map((_, i) => 900 + i);
   function scheduleBackupAlarm(at) {
-    if (!isNative || !LocalNotif || S.alarmed) return;
+    if (!isNative || S.alarmed) return;
     if (Math.abs(at - backupAt) < 20000) return;          // only reschedule when the estimate moves
     backupAt = at;
-    LocalNotif.cancel({ notifications: [{ id: BACKUP_ID }] }).catch(() => {}).then(() => {
-      if (at > Date.now() + 10000) LocalNotif.schedule({ notifications: [nativeNote(BACKUP_ID,
-        (S.dest.kind === 'metro' ? '🚇 ' : '🚌 ') + 'Your stop is coming up',
-        `${S.dest.name} is close (timetable estimate). Get ready to exit.`, true, at)] }).catch(() => {});
+    const title = (S.dest.kind === 'metro' ? '🚇 ' : '🚌 ') + 'Your stop is coming up';
+    const body = `${S.dest.name} is close (timetable estimate). Get ready to exit.`;
+    if (isAndroid && AlarmVibe) {                         // Android rings this itself, even if the app is asleep
+      if (at > Date.now() + 10000) AlarmVibe.schedule({ at, title, body, tune: S.tune, sound: S.alertMode === 'sound' }).catch(() => {});
+      return;
+    }
+    if (!LocalNotif) return;
+    LocalNotif.cancel({ notifications: BACKUP_IDS.map(id => ({ id })) }).catch(() => {}).then(() => {
+      if (at > Date.now() + 10000) LocalNotif.schedule({ notifications: BACKUP_IDS.map((id, i) => nativeNote(id, title, body, true, at + i * 5000)) }).catch(() => {});
     });
   }
   function cancelBackupAlarm() {
     backupAt = 0;
-    if (isNative && LocalNotif) LocalNotif.cancel({ notifications: [{ id: BACKUP_ID }] }).catch(() => {});
+    if (isAndroid && AlarmVibe) AlarmVibe.cancelSchedule().catch(() => {});
+    if (isNative && LocalNotif) LocalNotif.cancel({ notifications: BACKUP_IDS.map(id => ({ id })) }).catch(() => {});
   }
+  // back in the app: if the alarm was stopped from the notification, finish it here too;
+  // if Android's backup alarm rang while the app was asleep, show the alarm screen
+  async function syncNativeAlarm() {
+    if (!isAndroid || !AlarmVibe) return;
+    let st; try { st = await AlarmVibe.status(); } catch { return; }
+    const on = $('alarm').classList.contains('on');
+    if (on && st.lastDismissed > alarmStartedAt) $('dismiss').click();
+    else if (!on && st.ringing && S.tracking && !S.alarmed) { S.alarmed = true; fireAlarm('Your stop is coming up!', `${S.dest.name} is close. Get ready to exit.`); }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncNativeAlarm(); });
   async function notify(title, body, urgent) {
     try {
       if (isNative && LocalNotif) {
@@ -1679,7 +1725,7 @@
   }
   function flushSamples() {
     if (!S._samples || !S._samples.length) return;
-    apiCall('/api/samples', { id: installId(), samples: S._samples.splice(0, 50) });
+    apiCall('/api/samples', { id: installId(), samples: S._samples.splice(0, 50) }).then(r => gotCoins(r, 'for helping learn train times'));
   }
   // expected wait for the next Metro train when the trip starts on the platform
   // bus: wait until the next scheduled bus of this route at the stop where the trip started
@@ -1836,7 +1882,10 @@
     if (S.startDist == null || d > S.startDist) S.startDist = Math.max(d, S.radius + 1);
 
     $('dist').textContent = fmtM(d);
-    $('speed').textContent = avg > 0.5 ? Math.round(avg * 3.6) : '0';
+    const recent = S.speeds.slice(-3);
+    const vShow = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 0;
+    S._vShow = vShow;
+    $('speed').textContent = vShow > 0.5 ? Math.round(vShow * 3.6) : '0';
     if (!S._route) {           // pin / single stop: straight-line distance ÷ speed
       if (avg > 1.5) S._eta = { at: now + d / avg * 1000 };
       else if (!S._eta) { $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA'; }
@@ -1851,7 +1900,7 @@
       const vNow = S.speeds.length ? Math.min(avg, S.speeds[S.speeds.length - 1]) : avg;   // react fast to a stop
       const vLast = S.speeds.length ? S.speeds[S.speeds.length - 1] : avg;
       updateStation(now, vNow, acc, vLast);
-      renderMotion(P, vLast, trendAccel(now, vLast), now);
+      renderMotion(P, S._vShow, trendAccel(now, vLast), now);
       S._lastNext = P.next;
       const E = estimateRouteEta(P, now);
       S._eta = { at: now + E.total * 1000, nextAt: now + E.tNext * 1000, nextName: P.nextName,
@@ -1972,8 +2021,8 @@
     const E = S._eta, mode = S.dest.kind === 'metro' ? 'Metro' : (S.dest.kind === 'bus' || S.dest.kind === 'stop') ? 'bus' : 'the way';
     const text = `I'm on ${mode === 'the way' ? 'my way' : 'the ' + mode} to ${S.dest.name}` +
       (E && E.at ? `, arriving around ${fmtClock(E.at)} (${fmtDur(Math.max(0, (E.at - Date.now()) / 1000))})` : '') + '. – Metro Alert';
-    try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
-    try { await navigator.clipboard.writeText(text); toast('ETA copied. Paste it in WhatsApp or SMS'); }
+    try { if (navigator.share) { await navigator.share({ text }); track('share'); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text); toast('ETA copied. Paste it in WhatsApp or SMS'); track('share'); }
     catch { toast(text); }
   };
   $('stop').onclick = () => { stopAlarm(); S.plan = null; renderPlanStrip(); stopTracking('Tracking stopped.'); };
@@ -2121,6 +2170,7 @@
     $('profSince').textContent = user.created ? 'Member since ' + user.created : '';
     $('profNameIn').value = user.name; $('profErr').textContent = '';
     $('profile').classList.add('on');
+    renderCoins('profCoins');
     refreshUser().then(() => { if (user) { $('profTrips').textContent = user.trips || 0; $('profAlarms').textContent = user.alarms || 0; } });
   }
   $('closeProfile').onclick = () => $('profile').classList.remove('on');
@@ -2142,6 +2192,21 @@
     if (!r.ok) { $('profErr').textContent = r.data.error || 'Could not delete.'; return; }
     setUser(null); $('profile').classList.remove('on'); toast('Your account was deleted');
   };
+
+  // ================= Coins =================
+  async function renderCoins(boxId) {
+    const box = $(boxId); if (!box) return;
+    if (!API) { box.style.display = 'none'; return; }
+    box.style.display = '';
+    const c = await apiCall('/api/coins?id=' + installId());
+    if (!c) { box.innerHTML = '<h3>🪙 Coins</h3><p class="fine">Connect to the internet to see your coins.</p>'; return; }
+    const prev = 25 * (c.level - 1) * (c.level - 1), pct = Math.min(100, (c.earned - prev) / Math.max(1, c.nextLevelAt - prev) * 100);
+    box.innerHTML = `<div class="ctop"><div class="cbig">🪙 ${c.coins} <small>coins</small></div>
+        <div class="lv"><b>Level ${c.level}</b>${c.rank ? '#' + c.rank + ' of all riders' : ''}</div></div>
+      <div class="lvbar"><i style="width:${pct}%"></i></div><div class="fine" style="margin:0">${c.nextLevelAt - c.earned} more to level ${c.level + 1}</div>
+      <ul>${c.rules.map(r => `<li class="${r.doneToday >= r.max ? 'done' : ''}"><span>${esc(r.label)}</span><b>+${r.coins}</b><small>${r.once ? (r.doneToday ? '✓' : 'once') : r.doneToday + '/' + r.max}</small></li>`).join('')}</ul>
+      ${user ? '' : '<p class="fine">Sign up to keep your coins on all your phones (+100 bonus).</p>'}`;
+  }
 
   // ================= Theme =================
   S.theme = store.get('theme', 'auto');
@@ -2174,6 +2239,7 @@
     $('setVer').textContent = 'v' + VERSION + (nativeVer && nativeVer !== VERSION ? ` (app ${nativeVer})` : '');
     $('setData').textContent = S.T ? S.T.generated : '–';
     renderAccountSec();
+    renderCoins('coinSec');
   }
   $('openSettings').onclick = () => { renderSettings(); $('settings').classList.add('on'); refreshUser(); };
   $('closeSettings').onclick = () => { $('settings').classList.remove('on'); if (previewing) previewTune(previewing); };

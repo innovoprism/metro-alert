@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.9.0 (2026-11-24)
+- **Alarm with the app in the background (Android):** the wake-up alarm is now a real alarm notification that repeats its sound and vibration until you tap "I'm getting off", opens the alarm screen over the lock screen, and works with the screen off. The timetable backup alarm is rung by Android itself, so it still goes off if the app was put to sleep.
+- **iPhone in the background:** the alarm notification repeats every 5 seconds for 2 minutes (each one buzzes and plays the tune), then every 30 seconds. iOS doesn't allow apps to vibrate non-stop in the background.
+- **🪙 Coins:** earn coins for opening the app each day, trips, waking up at your stop, planning journeys, sharing your ETA and helping learn train times (with daily limits), plus a welcome and sign-up bonus. Levels and your rank among all riders in Settings and Profile. Coins earned before signing up move to your account.
+- **Admin page:** coins and level for every registered user, total coins earned, today's coins by reason, top riders without an account.
+- Fix: the Stop button was invisible in dark mode.
+- Fix: the speed in the box and in the status line now always show the same value.
+- Reinstall the APK/IPA once for the alarm changes.
+
 ## v1.8.0 (2026-11-22)
 - **🧭 How to get there (journey planner):** after choosing a destination, tap "How to get there" for up to 3 routes combining walking, buses and the Metro (fastest, fewer changes, more Metro / bus only). Each shows the total time, arrival time, every step, Metro frequency and the real next scheduled buses at the time you reach each stop. Night buses are only used at night, and the Metro's closing hours are respected.
 - **Trips with changes:** "Start trip with alarms" wakes you at every stop where you change ("Change to Bus 20 at Rashidiya Bus Station") and at your final stop, then continues with the next part automatically.
