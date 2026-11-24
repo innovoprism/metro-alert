@@ -122,6 +122,8 @@ Optional email + password accounts (server `/api/auth/*`, `/api/me`). Passwords 
 Nothing personal is sent: no name, location, phone number or device ID. APK/IPA download counts are also on the GitHub Releases page.
 
 ## Transit data
+
+Etihad Rail passenger stations and the published weekday/weekend timetable are in `scripts/rail.py` (writes `www/data/rail.json`). Update the timetable there when Etihad Rail changes it, then run `python3 scripts/rail.py`.
 `www/data/transit.json` is built from RTA's official GTFS feed (the public timetable data RTA publishes on Dubai Pulse):
 - **Metro:** stations and line order are up to date; renamed stations are listed in `scripts/build-transit.py` → `STATION_RENAMES` (latest: ONPASSIVE → Garmin, Sep 2026).
 - **Bus:** 156 routes / 2,432 stops from RTA's 2021 feed, the newest copy that could be downloaded here. Some routes have changed since. To refresh, download the current GTFS from Dubai Pulse ("RTA Public Transports", free account) and run:

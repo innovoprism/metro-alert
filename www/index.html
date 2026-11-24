@@ -98,6 +98,15 @@
   .nextbox .big { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; min-width: 44px; text-align: center; }
   .nextbox .t { flex: 1; min-width: 0; }
   .nextbox small { opacity: .7; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .gofrom { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+  .modes { font-size: 12px; color: var(--muted); margin: 2px 0 4px; font-weight: 600; }
+  .upcoming { display: none; margin-top: 8px; background: var(--bg); border-radius: 12px; padding: 8px 12px; font-size: 13px; }
+  .upcoming.on { display: block; }
+  .upcoming summary { font-weight: 700; cursor: pointer; }
+  .upcoming ol { list-style: none; margin: 6px 0 0; padding: 0; }
+  .upcoming li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); }
+  .upcoming li.me b { color: var(--accent, #0a7); }
+  .upcoming li span { opacity: .75; white-space: nowrap; }
   .motion { display: none; align-items: center; gap: 8px; margin-top: 8px; padding: 9px 12px; border-radius: 12px; background: var(--bg); font-size: 14px; font-weight: 600; }
   .motion.on { display: flex; }
   .motion i { font-style: normal; font-size: 18px; width: 22px; text-align: center; }
@@ -178,7 +187,7 @@
   .opt { background: #fff; border-radius: 16px; padding: 12px 14px; margin-bottom: 10px; border: 2px solid transparent; cursor: pointer; }
   .opt.sel { border-color: var(--red); }
   .opt .oh { display: flex; align-items: baseline; gap: 8px; } .opt .oh b { font-size: 22px; } .opt .oh span { color: var(--muted); font-size: 13px; flex: 1; }
-  .opt .tag { font-size: 11px; font-weight: 700; color: #fff; background: var(--ink); border-radius: 6px; padding: 2px 6px; }
+  .opt .oh .tag { flex: none; color: #fff; } .opt .tag { font-size: 11px; font-weight: 700; color: #fff; background: var(--ink); border-radius: 6px; padding: 2px 6px; }
   .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; font-size: 13px; }
   .chain .c { border-radius: 8px; padding: 3px 7px; font-weight: 700; color: #fff; } .chain .w { color: var(--muted); } .chain .ar { color: #c0c4cc; }
   .steps { margin: 10px 0 0; padding: 0; list-style: none; display: none; } .opt.sel .steps { display: block; }
@@ -207,7 +216,7 @@
   html[data-theme=dark] :is(.panel, .seg, .tab, .btn.ghost, .change, .pclose, .clk, .chip.recent) { background-color: #232733; color: var(--ink); }
   html[data-theme=dark] .tab.on { background: #f3f4f6; color: #111318; }
   html[data-theme=dark] .btn.stop { background: #f3f4f6; color: #111318; }
-  html[data-theme=dark] :is(.chip.on, .toast, .opt .tag) { background: #e5e7eb; color: #111318; border-color: #e5e7eb; }
+  html[data-theme=dark] :is(.chip.on, .toast, .opt .tag, .opt .oh .tag) { background: #e5e7eb; color: #111318; border-color: #e5e7eb; }
   html[data-theme=dark] .nextbox { background: #000; }
   html[data-theme=dark] .item:hover { background: #232733; }
   html[data-theme=dark] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.9); }
@@ -380,6 +389,7 @@
       <button class="tab on" data-tab="metro">🚇 Metro</button>
       <button class="tab" data-tab="bus">🚌 Bus</button>
       <button class="tab" data-tab="pin">📍 Map</button>
+      <button class="tab" data-tab="go">🧭 Go</button>
     </div>
 
     <div class="pane on" id="pane-metro">
@@ -401,6 +411,16 @@
       </div>
       <div class="list" id="busList"></div>
       <div class="note" id="busNote"></div>
+    </div>
+
+    <div class="pane" id="pane-go">
+      <div class="pad">
+        <div class="gofrom"><span>🟢 From</span><button class="chip on" id="goFromMe">My location</button><button class="chip" id="goFromMap">Map centre</button></div>
+        <input class="field" id="goQ" placeholder="Where to? Station, bus stop or any place" autocomplete="off" enterkeyhint="search">
+        <button class="nearbtn" id="goUseDest" style="display:none"></button>
+      </div>
+      <div class="list" id="goList"></div>
+      <div class="note">Shows the best ways there: Metro, bus, Etihad Rail and walking, with live bus and train times. Then start the trip and Metro Alert wakes you at each change.</div>
     </div>
 
     <div class="pane" id="pane-pin">
@@ -444,6 +464,7 @@
         <div class="nextin" id="nextIn"></div>
       </div>
       <div class="motion" id="motion"></div>
+      <details class="upcoming" id="upcoming"><summary>🕒 Upcoming stops &amp; arrival times</summary><ol id="upList"></ol></details>
       <div class="planstrip" id="planStrip"></div>
       <div class="stats">
         <div class="stat"><b id="dist">–</b><span>Distance</span></div>
@@ -579,6 +600,24 @@
     c.toggle('z-low', z < 13); c.toggle('z-mid', z >= 13 && z < 16);
   };
   map.on('zoomend', zoomClass); zoomClass();
+  // all bus stops as small dots when zoomed in; tap one for its next arrivals
+  let stopDots = null, stopDotsKey = '';
+  function drawStopDots() {
+    if (!S.T || !S.T.busStops) return;
+    if (!stopDots) stopDots = L.layerGroup().addTo(map);
+    if (map.getZoom() < 16) { if (stopDotsKey) { stopDots.clearLayers(); stopDotsKey = ''; } return; }
+    const b = map.getBounds().pad(0.2), key = b.toBBoxString();
+    if (key === stopDotsKey) return; stopDotsKey = key;
+    stopDots.clearLayers();
+    let n = 0;
+    S.T.busStops.forEach((st, i) => {
+      if (n > 300 || !b.contains([st[1], st[2]])) return; n++;
+      L.circleMarker([st[1], st[2]], { radius: 6, color: '#0067B1', weight: 2, fillColor: '#fff', fillOpacity: 1, pane: 'markerPane' })
+        .on('click', e => { L.DomEvent.stopPropagation(e); openDepartures([i]); })
+        .bindTooltip('🚏 ' + st[0] + ' · tap for bus times', { direction: 'top' }).addTo(stopDots);
+    });
+  }
+  map.on('moveend zoomend', () => drawStopDots());
 
   const destIcon = L.divIcon({ className: '', html: '<div class="dest-pin">📍</div>', iconSize: [34, 34], iconAnchor: [17, 32] });
   const meIcon = L.divIcon({ className: '', html: '<div class="me-dot"></div>', iconSize: [18, 18], iconAnchor: [9, 9] });
@@ -606,10 +645,10 @@
     const T = S.T;
     // draw Expo + Life Pharmacy red shapes and green
     T.metro.forEach(m => {
-      L.polyline(m._pts || (m._pts = decode(m.shape)), { color: m.color, weight: m.id === S.line ? 6 : 4, opacity: m.id === S.line ? 0.95 : 0.55, pane: 'lines', interactive: false }).addTo(metroLayer);
+      L.polyline(m._pts || (m._pts = decode(m.shape)), { color: m.color, weight: m.id === S.line ? 6 : 4, opacity: m.id === S.line ? 0.95 : 0.55, pane: 'lines', interactive: false, dashArray: m.rail ? '10 8' : null }).addTo(metroLayer);
     });
     T.stations.forEach((st, i) => {
-      const c = st.lines.length > 1 ? '#14161a' : (st.lines[0] === 'Green Line' ? '#00A651' : '#E4002B');
+      const c = st.rail ? RAIL_COLOR : st.lines.length > 1 ? '#14161a' : (st.lines[0] === 'Green Line' ? '#00A651' : '#E4002B');
       L.circleMarker([st.lat, st.lng], { radius: st.lines.length > 1 ? 7 : 5, color: c, weight: 3, fillColor: '#fff', fillOpacity: 1 })
         .bindTooltip(st.name, { permanent: true, direction: 'right', offset: [6, 0], className: 'stn-label' })
         .on('click', () => { if (!S.tracking) pickMetro(currentLine().stops.includes(i) ? S.line : lineFor(i), i, true); })
@@ -757,8 +796,34 @@
   const norm = s => s.toLowerCase().normalize('NFKD').replace(/[^a-z0-9&]+/g, ' ').trim();
   const lineById = id => S.T.metro.find(m => m.id === id);
   const currentLine = () => lineById(S.line) || S.T.metro[0];
+  // ---- Etihad Rail (national trains), shown as its own line next to the Metro ----
+  const RAIL_ID = 'etihad', RAIL_COLOR = '#8A6D3B';
+  function mergeRail(R) {
+    if (!R || S.T.rail) return;
+    const idx = {};
+    R.order.forEach(k => { const st = R.stations[k]; idx[k] = S.T.stations.length;
+      S.T.stations.push({ name: st.name, aka: st.aka, lat: st.lat, lng: st.lng, lines: ['Etihad Rail'], rail: k }); });
+    const stops = R.order.map(k => idx[k]);
+    S.T.metro.push({ id: RAIL_ID, name: 'Etihad Rail', to: 'Dubai · Abu Dhabi · Fujairah', color: R.color || RAIL_COLOR, rail: true,
+      stops, secs: R.secs, _pts: stops.map(i => [S.T.stations[i].lat, S.T.stations[i].lng]) });
+    S.T.rail = { ...R, idx, keyOf: Object.fromEntries(Object.entries(idx).map(([k, i]) => [i, k])) };
+  }
+  const isRailStation = i => !!(S.T.stations[i] && S.T.stations[i].rail);
+  const dubaiNow = (at = Date.now()) => { const t = new Date(at + 4 * 3600e3); return { dt: (t.getUTCDay() === 0 || t.getUTCDay() === 6) ? 'we' : 'wd', min: t.getUTCHours() * 60 + t.getUTCMinutes() + t.getUTCSeconds() / 60 }; };
+  // trains of today that stop at `fromKey` and later at `toKey` (either may be null), sorted by departure
+  function railTrips(fromKey, toKey, at = Date.now()) {
+    const R = S.T.rail; if (!R) return [];
+    const { dt } = dubaiNow(at);
+    return R.trips.filter(t => t.days === dt).map(t => {
+      const a = fromKey ? t.stops.findIndex(x => x[0] === fromKey) : 0;
+      const b = toKey ? t.stops.findIndex(x => x[0] === toKey) : t.stops.length - 1;
+      if (a < 0 || b < 0 || b <= a) return null;
+      return { t, dep: t.stops[a][2], arr: t.stops[b][1], from: t.stops[a][0], to: t.stops[b][0], last: t.stops[t.stops.length - 1][0] };
+    }).filter(Boolean).sort((x, y) => x.dep - y.dep);
+  }
+  const railName = k => S.T.rail.stations[k].name.replace(' (Etihad Rail)', '');
   const lineFor = i => (S.T.metro.find(m => m.stops.includes(i)) || S.T.metro[0]).id;
-  const lineDots = st => st.lines.map(l => `<i class="dot" style="background:${l === 'Green Line' ? 'var(--green)' : 'var(--red)'}"></i>`).join('');
+  const lineDots = st => st.lines.map(l => `<i class="dot" style="background:${l === 'Green Line' ? 'var(--green)' : l === 'Etihad Rail' ? RAIL_COLOR : 'var(--red)'}"></i>`).join('');
   const routeByN = n => S.T.bus.find(b => b.n === n);
 
   // Ordered stop list of the destination's route, in a common shape [{name,lat,lng}]
@@ -766,6 +831,8 @@
     if (!d || !S.T) return null;
     if (d.kind === 'metro') {
       const m = lineById(d.line); if (!m) return null;
+      if (m.rail) return { list: m.stops.map(i => ({ name: S.T.stations[i].name, lat: S.T.stations[i].lat, lng: S.T.stations[i].lng, key: S.T.stations[i].rail })),
+        secs: m.secs, fixedDir: false, trig: 2500, mode: 'R', line: null, rail: true, dwell: 120, accel: 0.5, platform: 600 };
       return { list: m.stops.map(i => ({ name: S.T.stations[i].name, lat: S.T.stations[i].lat, lng: S.T.stations[i].lng })), secs: m.secs, fixedDir: false, trig: 300,
         mode: 'M', line: m.name.startsWith('Green') ? 'Green' : 'Red', dwell: 30, accel: 1.0, platform: 140 };
     }
@@ -784,7 +851,8 @@
   function showTab(name) {
     activeTab = name;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.dataset.tab === name));
-    ['metro', 'bus', 'pin'].forEach(n => $('pane-' + n).classList.toggle('on', n === name));
+    if (name === 'go') renderGo();
+    ['metro', 'bus', 'pin', 'go'].forEach(n => $('pane-' + n).classList.toggle('on', n === name));
     $('savedChipsAll').style.display = name === 'pin' ? 'none' : (S.saved.length ? 'flex' : 'none');
     renderRecent();
     if (name !== 'bus') { busLayer.clearLayers(); }
@@ -817,13 +885,41 @@
       b.className = 'item seq' + (n === 0 ? ' first' : '') + (n === m.stops.length - 1 ? ' last' : '') +
         (S.dest && S.dest.kind === 'metro' && S.dest.line === m.id && S.dest.idx === n ? ' sel' : '');
       b.style.setProperty('--c', m.color);
-      const sub = [st.lines.length > 1 ? 'Interchange: Red ⇄ Green' : '', st.aka.length && st.aka[0] !== st.name ? 'formerly ' + st.aka[0] : ''].filter(Boolean).join(' · ');
+      let sub = [st.lines.length > 1 ? 'Interchange: Red ⇄ Green' : '', st.aka.length && st.aka[0] !== st.name && !st.rail ? 'formerly ' + st.aka[0] : ''].filter(Boolean).join(' · ');
+      if (st.rail) { const cur = dubaiNow().min, nx = railTrips(st.rail, null).find(t => t.dep >= cur);
+        sub = (st.rail === 'Y' ? 'Walk ~400 m from JGE Metro (Red Line) · ' : '') + (nx ? `Next train ${hhmm(nx.dep)} → ${railName(nx.last)}` : 'No more trains today'); }
       b.innerHTML = `<span class="seqline"></span><span class="t"><b>${esc(st.name)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>` +
         `<span class="r">${i === nearest ? '📍 nearest' : (S.me ? fmtM(haversine(S.me, st)) : '')}</span>`;
       b.onclick = () => pickMetro(m.id, n);
       list.appendChild(b);
     });
     if (!list.children.length) list.innerHTML = '<div class="note">No station matches.</div>';
+    if (m.rail) {
+      const b = document.createElement('button'); b.className = 'nearbtn'; b.style.margin = '8px 16px';
+      b.textContent = '🕒 Etihad Rail train times'; b.onclick = () => openRailDepartures();
+      list.prepend(b);
+    }
+  }
+  // Etihad Rail departures board: today's trains from each station (published timetable)
+  function openRailDepartures(onlyKey) {
+    const R = S.T.rail; if (!R) return;
+    const { min: cur, dt } = dubaiNow();
+    $('depsTitle').textContent = 'Etihad Rail · next trains';
+    $('depsBody').innerHTML = '';
+    R.order.filter(k => !onlyKey || k === onlyKey).forEach(k => {
+      const box = document.createElement('div'); box.className = 'depstop';
+      const st = R.stations[k], dist = S.me ? ' · ' + fmtM(haversine(S.me, st)) + ' away' : '';
+      box.innerHTML = `<h4>🚆 ${esc(railName(k))}</h4><small>${k === 'Y' ? 'Al Yalayis, linked to JGE Metro' : 'Station'}${dist}</small>`;
+      const next = railTrips(k, null).filter(t => t.dep >= cur - 1).slice(0, 4);
+      if (!next.length) box.insertAdjacentHTML('beforeend', '<div class="dep"><span class="t"><small>No more trains today.</small></span></div>');
+      next.forEach(t => {
+        const calls = t.t.stops.slice(t.t.stops.findIndex(x => x[0] === k) + 1).map(x => `${railName(x[0])} ${hhmm(x[1])}`).join(' · ');
+        box.insertAdjacentHTML('beforeend', `<div class="dep"><span class="badge" style="background:${RAIL_COLOR}">🚆</span><span class="t"><b>→ ${esc(railName(t.last))}</b><small>${esc(calls)}</small></span><span class="when"><b>${inTxt(Math.round(t.dep - cur))}</b><small>leaves ${hhmm(t.dep)}</small></span></div>`);
+      });
+      $('depsBody').appendChild(box);
+    });
+    $('depsBody').insertAdjacentHTML('beforeend', `<p class="fine">Etihad Rail passenger timetable (${dt === 'we' ? 'weekend' : 'weekday'}). Book tickets with Etihad Rail; times can change, so check before you travel.</p>`);
+    $('deps').classList.add('on');
   }
   $('stnFilter').addEventListener('input', renderStations);
 
@@ -936,7 +1032,7 @@
         const when = d.next.length
           ? `<b>${inTxt(d.inMin[0])}</b><small>${hhmm(d.next[0])}${d.next.length > 1 ? ' · then ' + d.next.slice(1).map(hhmm).join(', ') : ''}</small>`
           : `<b>–</b><small>${d.first != null ? 'first bus ' + hhmm(d.first) : 'no more today'}</small>`;
-        row.innerHTML = `<span class="badge">${esc(d.route)}</span><span class="t"><b>→ ${esc(d.to || '')}</b><small>${d.next.length ? 'Scheduled' : ''}</small></span><span class="when">${when}</span>`;
+        row.innerHTML = `<span class="badge">${esc(d.route)}</span><span class="t"><b>→ ${esc(d.to || '')}</b><small>${d.next.length ? 'Arrives at this stop' : ''}</small></span><span class="when">${when}</span>`;
         box.appendChild(row);
       });
       $('depsBody').appendChild(box);
@@ -980,11 +1076,18 @@
     const names = T.stations.map(s => s.name).concat(T.busStops.map(b => b[0]));
     const pats = [];
     T.metro.forEach(m => {
+      if (m.rail) return;                                   // Etihad Rail: timed trips below
       [false, true].forEach(rev => {
         const st = rev ? m.stops.slice().reverse() : m.stops.slice();
         const secs = rev ? m.secs.slice().reverse() : m.secs.slice();
         pats.push({ type: 'metro', name: m.name, color: m.color, stops: st, secs, line: m.id, to: T.stations[st[st.length - 1]].name });
       });
+    });
+    if (T.rail) T.rail.trips.forEach(tr => {
+      const st = tr.stops.map(x => T.rail.idx[x[0]]);
+      const dep = tr.stops.map(x => x[2] != null ? x[2] : x[1]), arr = tr.stops.map(x => x[1] != null ? x[1] : x[2]);
+      pats.push({ type: 'rail', name: 'Etihad Rail', color: RAIL_COLOR, stops: st, dep, arr, days: tr.days, line: RAIL_ID,
+        secs: st.slice(1).map((_, j) => (arr[j + 1] - dep[j]) * 60), to: railName(tr.stops[tr.stops.length - 1][0]) });
     });
     T.bus.forEach(r => r.dirs.forEach((d, k) => pats.push({ type: 'bus', name: r.n, color: '#0067B1', stops: d.stops.map(i => nM + i), secs: d.secs, route: r.n, dirIdx: k, gdir: d.d, to: d.to, hours: d.hours })));
     const byStop = pts.map(() => []);
@@ -1043,6 +1146,18 @@
         const p = pats[pi];
         if (prev[u].k === 'ride' && pats[prev[u].pi].type === p.type && pats[prev[u].pi].name === p.name) continue;
         if (p.type === 'bus' && !busRunning(p, now0 + c * 1000)) continue;
+        if (p.type === 'rail') {
+          const ck = dubaiNow(now0 + c * 1000);
+          if (ck.dt !== p.days) continue;
+          const w = (p.dep[pos] - ck.min) * 60 - (first ? 0 : o.transfer);
+          if (w < 0 || w > 4 * 3600) continue;
+          const base = c + w + (first ? 0 : o.transfer) + o.metroPen;
+          for (let j = pos + 1; j < p.stops.length; j++) {
+            const t = base + (p.arr[j] - p.dep[pos]) * 60, v = p.stops[j];
+            if (t < best[v]) { best[v] = t; prev[v] = { k: 'ride', from: u, pi, a: pos, b: j }; push(t, v); }
+          }
+          continue;
+        }
         let t = c + (p.type === 'metro' ? metroWaitSecs(now0 + c * 1000, metroLineName(p)) : o.busWait) + (first ? 0 : o.transfer) + (p.type === 'bus' ? o.busPen : o.metroPen);
         for (let j = pos + 1; j < p.stops.length; j++) {
           t += p.secs[j - 1] || 90;
@@ -1075,21 +1190,22 @@
     const { pats, names, nM } = PG;
     let total = 0, rides = 0; const t0 = Date.now();
     const out = legs.map(l => {
-      if (l.k === 'walk') { const sec = walkSecs(l.d); total += sec; return { k: 'walk', d: l.d, sec, toName: l.to != null ? names[l.to] : S.dest.name }; }
+      if (l.k === 'walk') { const sec = walkSecs(l.d); total += sec; return { k: 'walk', d: l.d, sec, toName: l.to != null ? names[l.to] : (planTarget || S.dest).name }; }
       const p = pats[l.pi]; rides++;
       let ride = 0; for (let j = l.a; j < l.b; j++) ride += p.secs[j] || 90;
-      const wait = p.type === 'metro' ? metroWaitSecs(t0 + total * 1000, metroLineName(p)) : 8 * 60;
+      let wait = p.type === 'metro' ? metroWaitSecs(t0 + total * 1000, metroLineName(p)) : 8 * 60, trainAt = null;
+      if (p.type === 'rail') { ride = (p.arr[l.b] - p.dep[l.a]) * 60; wait = Math.max(0, (p.dep[l.a] - dubaiNow(t0 + total * 1000).min) * 60); trainAt = p.dep[l.a]; }
       total += ride + wait;
       const fromG = p.stops[l.a], toG = p.stops[l.b];
       let dest;
-      if (p.type === 'metro') {
+      if (p.type === 'metro' || p.type === 'rail') {
         const line = lineById(p.line), st = S.T.stations[toG];
         dest = { lat: st.lat, lng: st.lng, name: st.name, kind: 'metro', line: p.line, idx: line.stops.indexOf(toG), sub: `${p.name} → ${p.to}` };
       } else {
         const bs = S.T.busStops[toG - nM];
         dest = { lat: bs[1], lng: bs[2], name: bs[0], kind: 'bus', route: p.route, dir: p.dirIdx, idx: l.b, sub: `Bus ${p.route} → ${p.to}` };
       }
-      return { k: 'ride', type: p.type, name: p.name, color: p.color, to: p.to, from: names[fromG], fromG, toName: names[toG], n: l.b - l.a, ride, wait, dest, route: p.route, gdir: p.gdir, dirIdx: p.dirIdx };
+      return { k: 'ride', type: p.type, name: p.name, color: p.color, to: p.to, from: names[fromG], fromG, toName: names[toG], n: l.b - l.a, ride, wait, dest, route: p.route, gdir: p.gdir, dirIdx: p.dirIdx, trainAt, arrAt: p.type === 'rail' ? p.arr[l.b] : null };
     });
     return { legs: out, total, rides };
   }
@@ -1105,31 +1221,77 @@
     for (const v of variants) {
       const legs = planSearch(from, to, v.o);
       if (!legs) continue;
-      const sig = legs.filter(l => l.k === 'ride').map(l => PG.pats[l.pi].name + '@' + PG.pats[l.pi].stops[l.a] + '>' + PG.pats[l.pi].stops[l.b]).join('|') || 'walk';
+      const sig = legs.filter(l => l.k === 'ride').map(l => PG.pats[l.pi].name + (PG.pats[l.pi].type === 'rail' ? PG.pats[l.pi].dep[l.a] : '') + '@' + PG.pats[l.pi].stops[l.a] + '>' + PG.pats[l.pi].stops[l.b]).join('|') || 'walk';
       if (seen.has(sig)) continue;
       seen.add(sig);
       res.push({ tag: v.tag, ...planDescribe(legs) });
     }
     res.sort((a, b) => a.total - b.total);
     if (res.length) res[0].tag = 'Fastest';
-    return res.slice(0, 3);
+    const top = res.filter(r => r.rides).slice(0, 3);
+    // walking: always offered when it is a reasonable walk
+    const direct = haversine(from, to);
+    if (direct < 3500) { const sec = walkSecs(direct);
+      top.push({ tag: 'Walk', legs: [{ k: 'walk', d: direct, sec, toName: to.name }], total: sec, rides: 0 }); }
+    top.sort((a, b) => a.total - b.total);
+    return top;
   }
-  let planRes = [], planSel = 0;
-  function openPlan() {
-    if (!S.T || !S.dest) return;
-    let from = S.me, fromTxt = 'Your location';
-    if (!from) { const c = map.getCenter(); from = { lat: c.lat, lng: c.lng }; fromTxt = 'Map centre (turn on location for your position)'; }
-    $('planFrom').textContent = fromTxt; $('planTo').textContent = S.dest.name;
+  let planRes = [], planSel = 0, planTarget = null, goFromMap = false;
+  // ---- 🧭 Go tab: plan a trip to anywhere ----
+  function renderGo() {
+    $('goFromMe').classList.toggle('on', !goFromMap); $('goFromMap').classList.toggle('on', goFromMap);
+    const u = $('goUseDest');
+    if (S.dest) { u.style.display = ''; u.textContent = '🧭 Routes to ' + S.dest.name; u.onclick = () => openPlan(S.dest); } else u.style.display = 'none';
+    goSearch(false);
+  }
+  $('goFromMe').onclick = () => { goFromMap = false; if (!S.me) locateOnce(false); renderGo(); };
+  $('goFromMap').onclick = () => { goFromMap = true; renderGo(); };
+  let goTimer = null;
+  $('goQ').addEventListener('input', () => { clearTimeout(goTimer); goTimer = setTimeout(() => goSearch(false), 150); });
+  $('goQ').addEventListener('keydown', e => { if (e.key === 'Enter') goSearch(true); });
+  function goItem(html, fn) {
+    const b = document.createElement('button'); b.className = 'item'; b.innerHTML = html; b.onclick = fn; $('goList').appendChild(b);
+  }
+  async function goSearch(places) {
+    const q = $('goQ').value.trim(), nq = norm(q), box = $('goList'); box.innerHTML = '';
+    if (!S.T || q.length < 1) return;
+    S.T.stations.map((s, i) => [s, i]).filter(([s]) => norm(s.name + ' ' + s.aka.join(' ')).includes(nq)).slice(0, 6).forEach(([s]) =>
+      goItem(`<span class="dots">${lineDots(s)}</span><span class="t"><b>${esc(s.name)}</b><small>${esc(s.lines.join(' & '))}</small></span>`,
+        () => openPlan({ lat: s.lat, lng: s.lng, name: s.name, kind: 'pin', sub: 'Station' })));
+    if (q.length >= 3) S.T.busStops.filter(s => norm(s[0]).includes(nq)).slice(0, 5).forEach(s =>
+      goItem(`<span class="dots">🚏</span><span class="t"><b>${esc(s[0])}</b><small>Bus stop · routes ${esc(s[3].slice(0, 8).join(', '))}</small></span>`,
+        () => openPlan({ lat: s[1], lng: s[2], name: s[0], kind: 'pin', sub: 'Bus stop' })));
+    if (q.length < 3) return;
+    if (!places) { goItem(`<span class="dots">🔎</span><span class="t"><b>Search places for “${esc(q)}”</b><small>Malls, buildings, addresses</small></span>`, () => goSearch(true)); return; }
+    try {
+      const b = map.getBounds();
+      const data = await (await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=ae&q=' + encodeURIComponent(q) +
+        '&viewbox=' + [b.getWest(), b.getNorth(), b.getEast(), b.getSouth()].join(','), { headers: { 'Accept-Language': 'en' } })).json();
+      if (!data.length) box.insertAdjacentHTML('beforeend', '<div class="note">No places found.</div>');
+      data.forEach(r => { const [title, ...rest] = r.display_name.split(',');
+        goItem(`<span class="dots">📍</span><span class="t"><b>${esc(title)}</b><small>${esc(rest.slice(0, 3).join(',').trim())}</small></span>`,
+          () => openPlan({ lat: +r.lat, lng: +r.lon, name: title.trim(), sub: 'Place', kind: 'pin' })); });
+    } catch { toast('Place search needs internet.'); }
+  }
+  function openPlan(target) {
+    if (target && target.target) target = null;            // called from a click event
+    planTarget = target || S.dest;
+    if (!S.T || !planTarget) return;
+    let from = goFromMap ? null : S.me, fromTxt = 'Your location';
+    if (!from) { const c = map.getCenter(); from = { lat: c.lat, lng: c.lng }; fromTxt = goFromMap ? 'Map centre' : 'Map centre (turn on location for your position)'; }
+    $('planFrom').textContent = fromTxt; $('planTo').textContent = planTarget.name;
     $('plan').classList.add('on');
     track('plan');
     $('planList').innerHTML = '<p class="fine">Finding routes…</p>';
     setTimeout(() => {
-      planRes = planOptions(from, S.dest); planSel = 0;
+      planRes = planOptions(from, planTarget); planSel = 0;
       renderPlan();
       planRes.forEach((opt, oi) => liveTimesForOption(oi));
     }, 30);
   }
-  function legIcon(l) { return l.k === 'walk' ? '🚶' : l.type === 'metro' ? '🚇' : '🚌'; }
+  function legIcon(l) { return l.k === 'walk' ? '🚶' : l.type === 'metro' ? '🚇' : l.type === 'rail' ? '🚆' : '🚌'; }
+  const legName = l => (l.type === 'bus' ? 'Bus ' + l.name : l.name);
+  const optModes = opt => [...new Set(opt.legs.map(l => l.k === 'walk' ? 'Walk' : l.type === 'metro' ? 'Metro' : l.type === 'rail' ? 'Train' : 'Bus'))].join(' · ');
   function renderPlan() {
     const box = $('planList'); box.innerHTML = '';
     if (!planRes.length) { box.innerHTML = '<p class="fine">No route found. Try a stop closer to a bus or Metro line.</p>'; return; }
@@ -1139,9 +1301,9 @@
       const chain = opt.legs.map(l => l.k === 'walk' ? `<span class="w">🚶${Math.max(1, Math.round(l.sec / 60))}</span>` : `<span class="c" style="background:${l.color}">${legIcon(l)} ${esc(l.type === 'metro' ? l.name.replace(' Line', '') : l.name)}</span>`).join('<span class="ar">›</span>');
       const steps = opt.legs.map((l, li) => l.k === 'walk'
         ? `<li><i>🚶</i><div>Walk ${fmtM(l.d * 1.25)} to ${esc(l.toName)}<small>about ${Math.max(1, Math.round(l.sec / 60))} min</small></div></li>`
-        : `<li><i>${legIcon(l)}</i><div><b>${esc(l.type === 'metro' ? l.name : 'Bus ' + l.name)}</b> → ${esc(l.to)}<small>From ${esc(l.from)} · ${l.n} stop${l.n > 1 ? 's' : ''} · ~${Math.round(l.ride / 60)} min · get off at <b>${esc(l.toName)}</b></small>
-             <small class="live" id="live-${oi}-${li}">${l.type === 'metro' ? 'Trains about every ' + Math.round(l.wait * 2 / 60) + ' min' : ''}</small></div></li>`).join('');
-      el.innerHTML = `<div class="oh"><b>${fmtDur(opt.total)}</b><span>arrive ≈ ${arr} · ${opt.rides ? opt.rides - 1 + ' change' + (opt.rides - 1 === 1 ? '' : 's') : 'walk only'}</span><span class="tag">${esc(opt.tag)}</span></div>
+        : `<li><i>${legIcon(l)}</i><div><b>${esc(legName(l))}</b> → ${esc(l.to)}<small>From ${esc(l.from)} · ${l.n} stop${l.n > 1 ? 's' : ''} · ~${Math.round(l.ride / 60)} min · get off at <b>${esc(l.toName)}</b></small>
+             <small class="live" id="live-${oi}-${li}">${l.type === 'metro' ? 'Trains about every ' + Math.round(l.wait * 2 / 60) + ' min' : l.type === 'rail' ? `Train leaves ${hhmm(l.trainAt)}, arrives ${hhmm(l.arrAt)} · book with Etihad Rail` : ''}</small></div></li>`).join('');
+      el.innerHTML = `<div class="oh"><b>${fmtDur(opt.total)}</b><span>arrive ≈ ${arr} · ${opt.rides ? opt.rides - 1 + ' change' + (opt.rides - 1 === 1 ? '' : 's') : 'walk only'}</span><span class="tag">${esc(opt.tag)}</span></div><div class="modes">${esc(optModes(opt))}</div>
         <div class="chain">${chain}</div><ol class="steps">${steps}</ol>
         ${opt.rides ? '<button class="pbtn">Start trip with alarms</button>' : ''}`;
       el.onclick = e => { if (e.target.classList.contains('pbtn')) return; planSel = oi; document.querySelectorAll('#planList .opt').forEach((x, k) => x.classList.toggle('sel', k === oi)); };
@@ -1156,6 +1318,7 @@
     for (let li = 0; li < opt.legs.length; li++) {
       const l = opt.legs[li];
       if (l.k === 'walk') { t += l.sec; continue; }
+      if (l.type === 'rail') { l.wait = Math.max(0, (l.trainAt - dubaiNow(Date.now() + t * 1000).min) * 60); t += l.wait + l.ride; changed = true; continue; }
       if (l.type === 'metro') { l.wait = metroWaitSecs(Date.now() + t * 1000, metroLineName({ name: l.name })); t += l.wait + l.ride; continue; }
       const r = await fetchDepartures([l.fromG - PG.nM], { route: l.route, dir: l.gdir, n: 6 });
       const d = r && (r.stops[S.T.busStops[l.fromG - PG.nM][4]] || [])[0];
@@ -1181,7 +1344,7 @@
   // ---- multi-leg trip: one alarm per ride, then on to the next ride ----
   function startPlan(opt) {
     $('plan').classList.remove('on');
-    const finalDest = { ...S.dest };
+    const finalDest = { ...(planTarget || S.dest) };
     S.plan = { legs: opt.legs, finalDest, cur: -1 };
     goToNextRide();
   }
@@ -1193,7 +1356,7 @@
     const l = P.legs[i], rides = P.legs.filter(x => x.k === 'ride'), n = rides.indexOf(l) + 1;
     const nextRide = P.legs.slice(i + 1).find(x => x.k === 'ride');
     const d = { ...l.dest, sub: `Part ${n} of ${rides.length} · ${l.dest.sub}` };
-    d.changeTo = nextRide ? `Change to ${nextRide.type === 'metro' ? nextRide.name : 'Bus ' + nextRide.name} (${nextRide.from})` : '';
+    d.changeTo = nextRide ? `Change to ${legName(nextRide)} (${nextRide.from})` : '';
     setDest(d);
     startTracking();
     renderPlanStrip();
@@ -1203,8 +1366,8 @@
     const P = S.plan, el = $('planStrip');
     if (!P) { el.classList.remove('on'); return; }
     const l = P.legs[P.cur], rides = P.legs.filter(x => x.k === 'ride'), n = rides.indexOf(l) + 1;
-    const after = P.legs.slice(P.cur + 1).map(x => x.k === 'walk' ? `walk to ${x.toName}` : `${x.type === 'metro' ? x.name : 'Bus ' + x.name} to ${x.toName}`).join(', then ');
-    el.innerHTML = `🧭 <b>Part ${n} of ${rides.length}</b>: ${esc(l.type === 'metro' ? l.name : 'Bus ' + l.name)} to ${esc(l.toName)}${after ? `<br><small>Then ${esc(after)}</small>` : ''}`;
+    const after = P.legs.slice(P.cur + 1).map(x => x.k === 'walk' ? `walk to ${x.toName}` : `${legName(x)} to ${x.toName}`).join(', then ');
+    el.innerHTML = `🧭 <b>Part ${n} of ${rides.length}</b>: ${esc(legName(l))} to ${esc(l.toName)}${after ? `<br><small>Then ${esc(after)}</small>` : ''}`;
     el.classList.add('on');
   }
 
@@ -1220,7 +1383,10 @@
     if (d.kind === 'bus') { const r = routeByN(d.route); if (r) { activeTab = 'bus'; drawBusRoute(r, d.dir); } }
     else if (d.kind !== 'bus') busLayer.clearLayers();
     if (d.kind === 'metro') { drawMetro(); }
-    const hasRoute = !!routeStops(d);
+    const isRail = d.kind === 'metro' && d.line === RAIL_ID;
+    S.radius = isRail ? Math.max(store.get('radius', 500), 2500) : store.get('radius', 500);
+    $('radius').value = S.radius; $('radiusOut').textContent = fmtM(S.radius);
+    const hasRoute = !!routeStops(d) && !isRail;
     document.querySelectorAll('#early button').forEach(b => { b.disabled = +b.dataset.k > 0 && !hasRoute; });
     setEarly(hasRoute ? S.earlyK : 0, true);
     drawDest(); updateSaveStar();
@@ -1315,7 +1481,7 @@
     if (q.length < 1) { resEl.style.display = 'none'; return; }
     if (S.T) {
       const stns = S.T.stations.map((s, i) => [s, i]).filter(([s]) => norm(s.name + ' ' + s.aka.join(' ')).includes(nq)).slice(0, 6);
-      if (stns.length) resEl.insertAdjacentHTML('beforeend', '<div class="res-h">Metro stations</div>');
+      if (stns.length) resEl.insertAdjacentHTML('beforeend', '<div class="res-h">Metro &amp; train stations</div>');
       stns.forEach(([s, i]) => addRes(`<span class="dots">${lineDots(s)}</span><span class="t"><b>${esc(s.name)}</b><small>${esc(s.lines.join(' & '))}${s.aka.length ? ' · formerly ' + esc(s.aka[0]) : ''}</small></span>`,
         () => { const lid = currentLine().stops.includes(i) ? S.line : lineFor(i); pickMetro(lid, i, true); }));
       const routes = S.T.bus.filter(b => b.n.toLowerCase().startsWith(q.toLowerCase())).slice(0, 6);
@@ -1409,10 +1575,11 @@
     const pr = tuneAudio.play();
     if (pr) pr.catch(() => {                     // blocked (no tap yet): fall back to beeps
       if (gen !== tuneGen) return;
-      tunePlaying = false; alarmBeeps(); alarmTimer = setInterval(alarmBeeps, 2200);
+      tunePlaying = false; clearInterval(alarmTimer); alarmBeeps();
+      alarmTimer = setInterval(() => { if (gen !== tuneGen || !$('alarm').classList.contains('on')) { clearInterval(alarmTimer); alarmTimer = null; return; } alarmBeeps(); }, 2200);
     });
   }
-  function stopTuneLoop() { tuneGen++; tunePlaying = false; try { tuneAudio.pause(); tuneAudio.currentTime = 0; } catch {} }
+  function stopTuneLoop() { tuneGen++; tunePlaying = false; clearInterval(alarmTimer); alarmTimer = null; try { tuneAudio.pause(); tuneAudio.currentTime = 0; } catch {} }
   // preview a tune for 4 s (settings), through the native player on phones so it sounds like the real alarm
   let previewTimer = null;
   let previewing = null;
@@ -1512,7 +1679,7 @@
     if (S.plan && S.plan.legs.slice(S.plan.cur + 1).some(x => x.k === 'ride')) {
       const next = S.plan.legs.slice(S.plan.cur + 1).find(x => x.k === 'ride');
       await stopTracking('');
-      toast(`Next: ${next.type === 'metro' ? next.name : 'Bus ' + next.name} from ${next.from}`);
+      toast(`Next: ${legName(next)} from ${next.from}`);
       goToNextRide();
       return;
     }
@@ -1572,6 +1739,9 @@
   const BACKUP_IDS = [...Array(12)].map((_, i) => 900 + i);
   function scheduleBackupAlarm(at) {
     if (!isNative || S.alarmed) return;
+    // not in the first fixes of a trip: the direction and train are not known yet, and a too-early
+    // estimate made the phone ring right after Start
+    if ((S._fixes || 0) < 4 || Date.now() - (S._startedAt || 0) < 60000 || at < Date.now() + 60000) return;
     if (Math.abs(at - backupAt) < 20000) return;          // only reschedule when the estimate moves
     backupAt = at;
     const title = (S.dest.kind === 'metro' ? '🚇 ' : '🚌 ') + 'Your stop is coming up';
@@ -1738,6 +1908,23 @@
       if (d && d.inMin.length) S._busNextAt = Date.now() + d.inMin[0] * 60000;
     });
   }
+  // Etihad Rail: pick the train from the timetable and use its arrival time
+  function railEta(now) {
+    const R = S._route, toKey = R.list[S.dest.idx].key, cur = dubaiNow(now).min;
+    if (!S._railTrip || cur > S._railTrip.arr + 30) {
+      let bi = -1, bd = Infinity; R.list.forEach((p, k) => { const d = haversine(S.me, p); if (d < bd) { bd = d; bi = k; } });
+      const nearKey = bd < 3000 ? R.list[bi].key : null;
+      let pick = null;
+      if (nearKey && nearKey !== toKey) pick = railTrips(nearKey, toKey, now).find(t => t.dep >= cur - 5);   // waiting at a station
+      if (!pick) pick = railTrips(null, toKey, now).filter(t => t.dep <= cur && t.arr >= cur - 2).sort((a, b) => a.arr - b.arr)[0];  // on a train
+      S._railTrip = pick || null;
+    }
+    const T = S._railTrip; if (!T) return;
+    const dayStart = now - cur * 60000;
+    S._eta.at = dayStart + T.arr * 60000;
+    S._eta.wait = Math.max(0, (T.dep - cur) * 60);
+    S._eta.train = `${hhmm(T.dep)} train from ${railName(T.from)}`;
+  }
   function platformWait() {
     const R = S._route; if (S._boarded) return 0;
     if (R.mode[0] === 'B') return S._busNextAt ? Math.max(0, (S._busNextAt - Date.now()) / 1000) : 0;
@@ -1793,6 +1980,34 @@
     }
     return { tNext, total: tNext + rest };
   }
+  // Arrival clock time at each stop still ahead (same model as the ETA, or the train timetable)
+  function renderUpcoming(P, E, now) {
+    const R = S._route, el = $('upcoming'); if (!R || !P || P.off) { el.classList.remove('on'); return; }
+    const d = S.dest.idx, dir = travelDir(P.next), rows = [];
+    if (R.rail && S._railTrip) {
+      const T = S._railTrip.t, dayStart = now - dubaiNow(now).min * 60000;
+      let on = false;
+      for (const [k, arr, dep] of T.stops) {
+        if (k === S._railTrip.from) on = true;
+        if (!on) continue;
+        const i = R.list.findIndex(x => x.key === k);
+        rows.push([R.list[i].name.replace(' (Etihad Rail)', ''), dayStart + (arr != null ? arr : dep) * 60000, i === d, arr == null ? 'dep' : '']);
+        if (i === d) break;
+      }
+    } else {
+      let t = now + E.tNext * 1000;
+      for (let i = P.next, n = 0; i >= 0 && i < R.list.length && n < 30; i += dir, n++) {
+        rows.push([R.list[i].name, t, i === d, '']);
+        if (i === d) break;
+        const m = segModel(i, i + dir); t += (m.dwell + m.run) * S._delay * 1000;
+      }
+    }
+    if (!rows.length) { el.classList.remove('on'); return; }
+    if (now - (S._upAt || 0) < 4000 && el.classList.contains('on')) return;   // don't redraw every fix
+    S._upAt = now;
+    $('upList').innerHTML = rows.map(r => `<li class="${r[2] ? 'me' : ''}"><b>${r[2] ? '🎯 ' : ''}${esc(r[0])}</b><span>${r[3] ? 'leaves ' : ''}${fmtClock(r[1])}${r[1] > now ? ' · in ' + ((r[1] - now) > 3600e3 ? fmtDur((r[1] - now) / 1000) : fmtMs((r[1] - now) / 1000)) : ''}</span></li>`).join('');
+    el.classList.add('on');
+  }
   // Seconds before arrival at which the "N stops early" alarm should ring (for the timetable backup)
   function earlyLeadSecs() {
     const R = S._route, d = S.dest.idx, k = S._k || 0;
@@ -1813,9 +2028,10 @@
     const now = Date.now(), rem = Math.max(0, (E.at - now) / 1000);
     $('eta').textContent = fmtDur(rem);
     $('etaLbl').textContent = 'ETA · ' + fmtClock(E.at) + (E.wait > 30 ? ' · incl. wait' : '');
+    if (E.train && S._route && S._route.rail) $('etaLbl').textContent = 'ETA · ' + fmtClock(E.at) + ' · ' + E.train;
     if (E.nextAt && E.nextName) $('nextIn').textContent = E.nextAt > now ? 'in ' + fmtMs((E.nextAt - now) / 1000) : 'arriving';
     const stale = S.lastFix && now - S.lastFix > 25000;
-    if (stale && S._route && !S.alarmed && rem <= earlyLeadSecs()) {
+    if (stale && S._route && !S.alarmed && S._fixes >= 3 && S._distArmed && rem <= earlyLeadSecs()) {
       S.alarmed = true;
       fireAlarm('Your stop is coming up!', `GPS lost (tunnel?). By the RTA timetable you are about to reach ${S.dest.name}. Check the station name.`);
     }
@@ -1867,6 +2083,7 @@
   function onPosition(lat, lng, acc, speed, heading) {
     const now = Date.now();
     S.lastFix = now; S.me = { lat, lng };
+    if (S.tracking) S._fixes = (S._fixes || 0) + 1;
     updateHeading(lat, lng, heading, speed);
     drawMe(lat, lng, acc);
     if (S.follow) centerOnMe(true);
@@ -1905,6 +2122,8 @@
       const E = estimateRouteEta(P, now);
       S._eta = { at: now + E.total * 1000, nextAt: now + E.tNext * 1000, nextName: P.nextName,
         wait: S._stn.state === 'dwell' && S._stn.atStart && !S._boarded ? platformWait() : 0 };
+      if (S._route.rail) railEta(now);
+      renderUpcoming(P, E, now);
       scheduleBackupAlarm(S._eta.at - earlyLeadSecs() * 1000 + 20000);
       $('togo').textContent = P.togo === 0 ? '🎯' : P.togo + 1;
       $('nextLbl').textContent = P.togo === 0 ? 'Next stop is yours' : `Next stop · ${P.togo + 1} stops to go`;
@@ -1937,8 +2156,14 @@
       }
     }
     // ---- distance alarm (always on) ----
-    if (!S.alarmed && d <= S.radius) { S.alarmed = true; fireAlarm('Almost there!', `You're within ${fmtM(S.radius)} of ${S.dest.name}. Get ready to exit.`); }
-    else if (S.headsup && !S.warned && !S.alarmed && d <= S.radius * 2) {
+    // A trip started inside (or right at) the alarm circle used to ring at once and keep ringing.
+    // Now each alarm is armed only after a good fix shows you clearly outside its circle.
+    const good = acc == null || acc <= Math.max(120, S.radius * 0.6);
+    if (good && d > S.radius * 1.2) S._distArmed = true;
+    if (good && d > S.radius * 2.2) S._warnArmed = true;
+    if (!S._distArmed && !S.alarmed && d <= S.radius && S._fixes <= 2) status(`You are already within ${fmtM(S.radius)} of ${S.dest.name}. The alarm will not ring here.`, true);
+    if (!S.alarmed && S._distArmed && good && d <= S.radius) { S.alarmed = true; fireAlarm('Almost there!', `You're within ${fmtM(S.radius)} of ${S.dest.name}. Get ready to exit.`); }
+    else if (S.headsup && S._warnArmed && good && !S.warned && !S.alarmed && d <= S.radius * 2) {
       S.warned = true; chime(); toast('⚠️ Heads-up: your stop is coming soon');
       notify('Heads-up: almost there', `${fmtM(d)} to ${S.dest.name}`, false);
     }
@@ -1954,7 +2179,8 @@
     unlockAudio();
     await setupNotifications();
     Object.assign(S, { tracking: true, alarmed: false, warned: false, startDist: null, speeds: [], prev: null, armed: {}, _dir: null,
-      _delay: 1, _eta: null, _lastNext: null, _stn: { state: 'none' }, _samples: [], _boarded: false, _vh: [], _busWaitFor: null, _busNextAt: 0 });
+      _delay: 1, _eta: null, _lastNext: null, _stn: { state: 'none' }, _samples: [], _boarded: false, _vh: [], _busWaitFor: null, _busNextAt: 0,
+      _fixes: 0, _startedAt: Date.now(), lastFix: 0, _distArmed: false, _warnArmed: false, _railTrip: null, _upAt: 0 });
     $('motion').classList.remove('on');
     loadLearned();
     $('eta').textContent = '–'; $('etaLbl').textContent = 'ETA';
@@ -1999,6 +2225,7 @@
   }
   async function stopTracking(msg) {
     S.tracking = false;
+    $('upcoming').classList.remove('on');
     clearInterval(etaTicker); cancelBackupAlarm(); flushSamples(); if (!S.plan) renderPlanStrip();
     setTimeout(startPassiveWatch, 500);
     clearInterval(staleTimer);
@@ -2327,11 +2554,12 @@
       status('Could not load RTA station data. Map pin mode still works.', true);
       showTab('pin'); renderSaved(); return;
     }
+    try { mergeRail(await (await fetch('data/rail.json?v=' + VERSION)).json()); } catch {}
     const d = S.T.busFeedDate;
     $('ver').innerHTML = `Metro Alert v${esc(VERSION)} · RTA data ${esc(S.T.generated)} · <a id="chkUpd">Check for updates</a>`;
     $('chkUpd').onclick = () => checkUpdate(true);
     $('busNote').textContent = `${S.T.bus.length} RTA bus routes · stops from RTA timetable data${d ? ' (' + d.slice(0, 4) + ')' : ''}. Some routes may have changed since, so check with RTA S'hail if unsure.`;
-    renderLineChips(); renderStations(); renderBus(); drawMetro(); renderSaved(); renderRecent();
+    renderLineChips(); renderStations(); setTimeout(drawStopDots, 300); renderBus(); drawMetro(); renderSaved(); renderRecent();
     if (S.dest) setDest(S.dest); else fitLine(currentLine(), false);
     if (!S.dest) showTab('metro');
     locateOnce(!S.dest);
@@ -2353,7 +2581,7 @@
   if (!isNative && 'serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (!isNative && !window.isSecureContext) status('GPS needs HTTPS (or localhost). Host this on an https:// address.', true);
 
-  window.__metroAlert = { S, map, onPosition, setDest, pickMetro, pickBus, routeByN, haversine, VERSION };
+  window.__metroAlert = { S, map, onPosition, setDest, pickMetro, pickBus, routeByN, haversine, VERSION, planOptions, openPlan, openRailDepartures, railTrips, dubaiNow, showTab };
 })();
 </script>
 </body>

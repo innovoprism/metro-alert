@@ -1,5 +1,13 @@
 # Changelog
 
+## v2.0.0 (2026-11-24)
+- **Fix: beeping right after Start.** If you started a trip already inside the alarm circle (or with a poor first GPS fix), the alarm could ring at once and keep going. Now each alarm only arms after a good fix shows you clearly outside its circle; the timetable backup alarm waits until the trip has settled (a minute and a few fixes); and the fallback beeps always stop with the alarm.
+- **🚆 Etihad Rail:** Fujairah, Al Dhaid, Dubai Al Yalayis (walk about 400 m from Jumeirah Golf Estates Metro) and Abu Dhabi MBZ City, shown as a dashed line. Track a train trip with the ETA taken from the published timetable, a 2.5 km alarm distance, and a "next trains" board for every station (weekday and weekend timetables).
+- **🧭 Go tab:** type any station, bus stop or place and get the best options from your location (or the map centre): Metro, bus, Etihad Rail and walking, each with the modes used, total time, arrival time and live bus and train times. Walking is always offered for trips under 3.5 km.
+- **Arrival times at upcoming stops** while tracking (Metro, bus and train): tap "Upcoming stops & arrival times".
+- **Bus stops on the map:** zoom in and every bus stop shows as a dot; tap one for the next buses arriving there. The bus board now says "Arrives at this stop".
+- Station coordinates for Etihad Rail are approximate; the alarm distance for train trips is wide to allow for this.
+
 ## v1.9.0 (2026-11-24)
 - **Alarm with the app in the background (Android):** the wake-up alarm is now a real alarm notification that repeats its sound and vibration until you tap "I'm getting off", opens the alarm screen over the lock screen, and works with the screen off. The timetable backup alarm is rung by Android itself, so it still goes off if the app was put to sleep.
 - **iPhone in the background:** the alarm notification repeats every 5 seconds for 2 minutes (each one buzzes and plays the tune), then every 30 seconds. iOS doesn't allow apps to vibrate non-stop in the background.
