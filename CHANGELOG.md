@@ -1,5 +1,12 @@
 # Changelog
 
+## v2.2.0 (2026-11-25) · new app install needed (native changes)
+- **The alarm rings like a real alarm clock.** Android: a native alarm service loops your tune on the alarm volume (also on silent), vibrates continuously, turns the screen on and opens the alarm screen over the lock screen until you tap "I'm getting off" (5 min max). The timetable backup uses Android's alarm-clock alarm, so it rings on time in deep sleep. iPhone with iOS 26: rings as a system alarm (AlarmKit), like the Clock app, also when the app is closed. Older iPhones keep the repeating notifications.
+- **Settings → "Alarm when the phone is locked"** shows what the phone allows (notifications, full-screen alarm, alarms & reminders, battery) with one-tap Allow buttons, and has a **"ring in 10 s" lock-screen test**.
+- **GPS like a navigation app:** the position snaps onto the Metro/train line (bus: onto the route), the blue dot glides smoothly, a light accuracy circle shows how sure the fix is, updates come as often as the GPS gives them, and in tunnels the dot keeps moving along the line (greyed) until GPS returns.
+- **"Arrived at <station>" only when the train has really stopped at the platform** (within the platform and stopped at least 4 s; a stop at a signal before the station doesn't count). Only then does "Next stop" move on to the following station; while approaching it shows the station you are arriving at.
+- **Landing page** at the site address (metro-alert.innovoprism.workers.dev) with features, how it works, FAQ and the latest Android download. The web app is now at **/app/**.
+
 ## v2.1.0 (2026-11-24)
 - **Coins only for reaching your stop.** Coins are no longer given for opening the app, starting a trip, planning, sharing, test alarms or sign-up. A tracked trip earns 10 coins + 2 per km (max 40, up to 4 trips a day) only when the server confirms it: it ended at the stop, lasted a believable time, actually moved (from GPS) and was at least 700 m. Starting and stopping a trip gives nothing. **All balances were reset to 0** because the old ones were counted wrongly (the old records are kept on the server).
 - **My recent trips** (with the coins each earned, or why not) and a **Top riders** board in Settings and Profile.

@@ -1,6 +1,6 @@
 {
   "name": "metro-alert",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "private": true,
   "description": "GPS metro stop alarm: set a destination, get vibration + sound when you're close.",
   "scripts": {
@@ -26,5 +26,5 @@
   "devDependencies": {
     "@capacitor/cli": "^8.0.0"
   },
-  "nativeMin": "1.9.0"
+  "nativeMin": "2.2.0"
 }

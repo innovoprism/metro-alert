@@ -226,6 +226,10 @@
   html[data-theme=dark] .motion.brk { background: #3d2f0c; } html[data-theme=dark] .motion.stop { background: #45161a; }
   html[data-theme=dark] .planstrip { background: #3a2a14; }
   html[data-theme=dark] .dest .pin { background: #3a1a20; }
+  .est .me-dot, .est svg { filter: grayscale(1); opacity: .6; }
+  .rel .r { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .rel .r span { flex: 1; } .rel .r small { display: block; opacity: .7; font-size: 11px; }
+  .rel .r button { border: 0; border-radius: 8px; padding: 6px 10px; background: var(--red, #E4002B); color: #fff; font-weight: 700; }
   .gpsq { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; margin-bottom: 6px; background: var(--bg); }
   .gpsq.good { color: #0a8a4a; } .gpsq.fair { color: #b7791f; } .gpsq.poor { color: #E4002B; }
   .coins h4 { margin: 12px 0 4px; font-size: 13px; }
@@ -308,6 +312,9 @@
       <div class="lbl"><span>Default alarm distance</span><output id="setRadiusOut"></output></div>
       <input type="range" id="setRadius" min="150" max="3000" step="50">
       <label class="toggle"><input type="checkbox" id="setHeadsup"> Heads-up buzz at 2× distance</label>
+      <div class="lbl">Alarm when the phone is locked</div>
+      <div id="relList" class="rel"></div>
+      <button class="nearbtn" id="lockTest" style="margin-top:8px">⏰ Test: ring in 10 s (lock your phone now)</button>
     </div>
 
     <div class="sec">
@@ -519,6 +526,7 @@
   const Haptics = plugin('Haptics');
   const LocalNotif = plugin('LocalNotifications');
   const isAndroid = isNative && CapX.Capacitor.getPlatform && CapX.Capacitor.getPlatform() === 'android';
+  const isIOS = isNative && CapX.Capacitor.getPlatform && CapX.Capacitor.getPlatform() === 'ios';
   const platform = isNative ? CapX.Capacitor.getPlatform() : 'web';
   const AlarmVibe = isNative ? plugin('AlarmVibe') : null;   // native (Android + iOS): non-stop vibration + alarm sound, also in background
 
@@ -708,13 +716,79 @@
     destMarker.on('dragend', e => { const p = e.target.getLatLng(); setDest({ ...S.dest, lat: p.lat, lng: p.lng }); });
   }
 
-  function drawMe(lat, lng, acc) {
-    const ll = [lat, lng];
+  // the blue dot glides to each new position (like Google Maps) instead of jumping
+  let meAnim = 0;
+  function drawMe(lat, lng, acc, estimated) {
+    const ll = L.latLng(lat, lng);
     if (!meMarker) {
       meMarker = L.marker(ll, { icon: meIcon, interactive: false, zIndexOffset: 900 }).addTo(map);
-      accCircle = L.circle(ll, { radius: acc || 0, color: '#2563eb', weight: 0, fillOpacity: 0.1, interactive: false }).addTo(map);
-    } else { meMarker.setLatLng(ll); accCircle.setLatLng(ll).setRadius(acc || 0); }
+      accCircle = L.circle(ll, { radius: acc || 0, color: '#2563eb', weight: 1, opacity: 0.25, fillOpacity: 0.12, interactive: false }).addTo(map);
+    } else {
+      const from = meMarker.getLatLng(), dist = from.distanceTo(ll), id = ++meAnim, t0 = performance.now();
+      const dur = dist > 2000 || document.hidden ? 0 : Math.min(950, 250 + dist * 6);
+      const step = t => {
+        if (id !== meAnim) return;
+        const k = dur ? Math.min(1, (t - t0) / dur) : 1, e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        const cur = L.latLng(from.lat + (ll.lat - from.lat) * e, from.lng + (ll.lng - from.lng) * e);
+        meMarker.setLatLng(cur); accCircle.setLatLng(cur);
+        if (k < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+      accCircle.setRadius(acc || 0);
+    }
+    const el = meMarker.getElement(); if (el) el.classList.toggle('est', !!estimated);
+    accCircle.setStyle({ color: estimated ? '#888' : '#2563eb', fillColor: estimated ? '#888' : '#2563eb' });
     updateMeArrow();
+  }
+  // ---- snap to the line you are riding (Metro / train track, bus stops) ----
+  const M_LAT = 110540, mLng = lat => 111320 * Math.cos(lat * Math.PI / 180);
+  function buildRoutePoly() {
+    S._poly = null;
+    const R = S._route, d = S.dest; if (!R || !d) return;
+    let pts = null;
+    if (d.kind === 'metro') { const m = lineById(d.line); pts = m && (m._pts || (m.shape && (m._pts = decode(m.shape)))); }
+    if (!pts) pts = R.list.map(p => [p.lat, p.lng]);
+    if (!pts || pts.length < 2) return;
+    const lat0 = pts[0][0], kx = mLng(lat0), lng0 = pts[0][1];
+    const xy = pts.map(p => [(p[1] - lng0) * kx, (p[0] - lat0) * M_LAT]), cum = [0];
+    for (let i = 1; i < xy.length; i++) cum.push(cum[i - 1] + Math.hypot(xy[i][0] - xy[i - 1][0], xy[i][1] - xy[i - 1][1]));
+    S._poly = { pts, xy, cum, lat0, lng0, kx, bus: R.mode[0] === 'B' };
+    S._poly.destAlong = snapToPoly(d.lat, d.lng).along;
+  }
+  function snapToPoly(lat, lng) {
+    const P = S._poly; if (!P) return null;
+    const x = (lng - P.lng0) * P.kx, y = (lat - P.lat0) * M_LAT;
+    let best = null;
+    for (let i = 1; i < P.xy.length; i++) {
+      const [ax, ay] = P.xy[i - 1], [bx, by] = P.xy[i], dx = bx - ax, dy = by - ay, L2 = dx * dx + dy * dy;
+      const t = L2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / L2)) : 0;
+      const px = ax + t * dx, py = ay + t * dy, dd = Math.hypot(x - px, y - py);
+      if (!best || dd < best.d) best = { d: dd, x: px, y: py, along: P.cum[i - 1] + t * Math.sqrt(L2) };
+    }
+    return { lat: P.lat0 + best.y / M_LAT, lng: P.lng0 + best.x / P.kx, d: best.d, along: best.along };
+  }
+  function pointAlong(along) {
+    const P = S._poly; along = Math.max(0, Math.min(P.cum[P.cum.length - 1], along));
+    let i = 1; while (i < P.cum.length - 1 && P.cum[i] < along) i++;
+    const seg = P.cum[i] - P.cum[i - 1] || 1, t = (along - P.cum[i - 1]) / seg, a = P.xy[i - 1], b = P.xy[i];
+    return { lat: P.lat0 + (a[1] + (b[1] - a[1]) * t) / M_LAT, lng: P.lng0 + (a[0] + (b[0] - a[0]) * t) / P.kx };
+  }
+  // In tunnels the GPS goes quiet: keep moving the dot along the line at the train's speed,
+  // greyed out, until the GPS is back (like Google Maps does). Alarms still use real fixes only.
+  let drTimer = null;
+  function deadReckon() {
+    const now = Date.now();
+    if (!S.tracking || !S._poly || !S._snap || S._poly.bus) return;
+    const age = (now - S.lastFix) / 1000;
+    if (age < 6 || age > 180 || !S._stn || S._stn.state !== 'run') { if (S._drOn && age < 6) S._drOn = false; return; }
+    const v = Math.min(25, Math.max(8, S._vShow || S._snap.v || 15));
+    const sign = Math.sign(S._poly.destAlong - S._snap.along) || 1;
+    let along = S._snap.along + sign * v * (age - 1);
+    along = sign > 0 ? Math.min(along, S._poly.destAlong) : Math.max(along, S._poly.destAlong);   // never past your stop
+    const p = pointAlong(along);
+    if (!S._drOn) { S._drOn = true; status('GPS lost (tunnel?). Estimating your position along the line…'); }
+    drawMe(p.lat, p.lng, 60 + age * 2, true);
+    if (S.follow) { const keep = S.me; S.me = p; centerOnMe(true); S.me = keep; }
   }
 
   // ================= Follow + orientation =================
@@ -1259,6 +1333,7 @@
     if (direct < 3500) { const sec = walkSecs(direct);
       top.push({ tag: 'Walk', legs: [{ k: 'walk', d: direct, sec, toName: to.name }], total: sec, rides: 0 }); }
     top.sort((a, b) => a.total - b.total);
+    top.forEach((r, i) => { if (i && r.tag === 'Fastest') r.tag = 'Option ' + (i + 1); else if (!i && r.rides) r.tag = 'Fastest'; });
     return top;
   }
   let planRes = [], planSel = 0, planTarget = null, goFromMap = false;
@@ -1637,10 +1712,14 @@
     nativeAlarm = false;
     if (AlarmVibe && isAndroid) {
       // the alarm notification repeats its sound + vibration by itself, even with the screen off or the app asleep
-      AlarmVibe.ring({ title: (S.dest && (S.dest.kind === 'bus' || S.dest.kind === 'stop') ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent,
-        body: $('alarmMsg').textContent, tune: S.tune, sound: S.alertMode === 'sound' }).catch(() => {});
+      // v2.2: a native alarm service rings like a clock alarm: looping tune on the alarm volume,
+      // continuous vibration, screen on, alarm screen over the lock screen, until you stop it
       alarmStartedAt = Date.now();
-      try { await AlarmVibe.start({ sound: false, vibrate: true, maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
+      try {
+        await AlarmVibe.ring({ title: (S.dest && (S.dest.kind === 'bus' || S.dest.kind === 'stop') ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent,
+          body: $('alarmMsg').textContent, tune: S.tune, sound: S.alertMode === 'sound' });
+        nativeAlarm = true;
+      } catch { try { await AlarmVibe.start({ sound: S.alertMode === 'sound', tune: tuneFile(), maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {} }
       if (gen !== wakeGen) { AlarmVibe.stop().catch(() => {}); AlarmVibe.cancelRing().catch(() => {}); return; }
     } else if (AlarmVibe) {
       try { await AlarmVibe.start({ sound: S.alertMode === 'sound', tune: tuneFile(), maxSeconds: WAKE_MAX_MS / 1000 }); nativeAlarm = true; } catch {}
@@ -1689,6 +1768,8 @@
       // Android app: the phone's own alarm tone loops natively. Elsewhere: in-app beeps.
       if (!nativeAlarm && S.alertMode === 'sound' && $('alarm').classList.contains('on')) startTuneLoop();
     });
+    if (isIOS && AlarmVibe && AlarmVibe.alarmSchedule && document.visibilityState !== 'visible')
+      AlarmVibe.alarmSchedule({ at: Date.now() + 1000, title: $('alarmTitle').textContent + ' · ' + (S.dest ? S.dest.name : '') }).catch(() => {});
     if (!isAndroid && (document.visibilityState !== 'visible' || !isNative)) notify((isBus ? '🚌 ' : '🚇 ') + ($('alarmTitle').textContent), $('alarmMsg').textContent, true);
     repeatNotify((isBus ? '🚌 ' : '🚇 ') + $('alarmTitle').textContent, $('alarmMsg').textContent);
     cancelBackupAlarm();
@@ -1696,6 +1777,7 @@
   }
   function stopAlarm() {
     $('alarm').classList.remove('on');
+    if (isIOS && AlarmVibe && AlarmVibe.alarmCancel) AlarmVibe.alarmCancel().catch(() => {});
     clearInterval(alarmTimer); alarmTimer = null;
     stopWakeVibration();
     cancelRepeatNotify();
@@ -1776,6 +1858,8 @@
     backupAt = at;
     const title = (S.dest.kind === 'metro' ? '🚇 ' : '🚌 ') + 'Your stop is coming up';
     const body = `${S.dest.name} is close (timetable estimate). Get ready to exit.`;
+    if (isIOS && AlarmVibe && AlarmVibe.alarmSchedule && at > Date.now() + 10000)   // iOS 26+: real alarm via AlarmKit
+      AlarmVibe.alarmSchedule({ at, title: `${S.dest.name}: your stop is coming up` }).catch(() => {});
     if (isAndroid && AlarmVibe) {                         // Android rings this itself, even if the app is asleep
       if (at > Date.now() + 10000) AlarmVibe.schedule({ at, title, body, tune: S.tune, sound: S.alertMode === 'sound' }).catch(() => {});
       return;
@@ -1788,6 +1872,7 @@
   function cancelBackupAlarm() {
     backupAt = 0;
     if (isAndroid && AlarmVibe) AlarmVibe.cancelSchedule().catch(() => {});
+    if (isIOS && AlarmVibe && AlarmVibe.alarmCancel) AlarmVibe.alarmCancel().catch(() => {});
     if (isNative && LocalNotif) LocalNotif.cancel({ notifications: BACKUP_IDS.map(id => ({ id })) }).catch(() => {});
   }
   // back in the app: if the alarm was stopped from the notification, finish it here too;
@@ -1798,7 +1883,7 @@
     const on = $('alarm').classList.contains('on');
     if (on && st.lastDismissed > alarmStartedAt) $('dismiss').click();
     else if (!on && st.ringing && S.tracking && !S.alarmed) { S.alarmed = true; fireAlarm('Your stop is coming up!', `${S.dest.name} is close. Get ready to exit.`); }
-    else if (!on && !S.tracking) {   // left over from a trip that ended when the app was closed: silence it
+    else if (!on && !S.tracking && Date.now() > (S._testUntil || 0)) {   // left over from a trip that ended when the app was closed: silence it
       if (st.ringing) { AlarmVibe.cancelRing().catch(() => {}); AlarmVibe.stop().catch(() => {}); }
       cancelBackupAlarm();
     }
@@ -1841,8 +1926,9 @@
     let next = i;
     const j = i + dir;
     if (i !== dIdx && j >= 0 && j < L_.length) {
-      const atStation = nd <= R.trig;                                     // standing at / leaving stop i
-      const passed = haversine(me, L_[j]) < haversine(L_[i], L_[j]) && nd > R.trig * 0.5;
+      const st = S._stn || {};
+      const atStation = (st.state === 'dwell' && st.i === i) || (st.state === 'run' && st.from === i);   // arrived at / left stop i
+      const passed = haversine(me, L_[j]) < haversine(L_[i], L_[j]) && nd > Math.max(R.platform, 150);   // went through without stopping
       if (atStation || passed) next = j;
     }
     if (R.fixedDir && i > dIdx) return { past: true, nearest: L_[i].name };
@@ -1904,8 +1990,15 @@
   function updateStation(now, avg, acc, vLast) {
     const R = S._route; let i = 0, nd = Infinity;
     R.list.forEach((p, k) => { const d = haversine(S.me, p); if (d < nd) { nd = d; i = k; } });
-    const st = S._stn, near = nd < R.platform + Math.min(acc || 0, 60);
-    if (near && avg < 1.5) {
+    // "Arrived" only when really stopped at the platform: close to the station point and slow
+    // for at least 4 s (a stop at a signal just before the station doesn't count)
+    const st = S._stn, near = nd < R.platform * 0.8 + Math.min(acc || 0, 40);
+    let arrivedHere = false;
+    if (near && avg < 1.5 && (st.state !== 'dwell' || st.i !== i)) {
+      if (S._arrCand !== i) { S._arrCand = i; S._arrCandAt = now; }
+      arrivedHere = now - S._arrCandAt >= 4000 || st.state === 'none';
+    } else if (!near || avg >= 1.5) S._arrCand = null;
+    if (arrivedHere) {
       if (st.state !== 'dwell' || st.i !== i) {
         if (st.state === 'run' && Math.abs(st.from - i) === 1) finishSegment(st.from, i, (now - st.departedAt) / 1000, st.dwell, st.at);
         S._stn = { state: 'dwell', i, arrivedAt: now, gotDeparture: st.state === 'run' || st.state === 'dwell' };
@@ -2105,7 +2198,7 @@
       if (st.i === d) { cls = 'st'; icon = '🎯'; text = `Arrived at ${name}`; right = ''; }
       else if (st.atStart && !S._boarded) { cls = 'st'; icon = '🕒'; text = R.line ? `Waiting for the train at ${name}` : `Waiting for bus ${R.route} at ${name}`;
         right = !R.line && S._busNextAt ? 'bus in ' + inTxt(Math.max(0, Math.round((S._busNextAt - now) / 60000))) : t; }
-      else { cls = 'st'; icon = '🟢'; text = `Stopped at ${name}`; right = t; }
+      else { cls = 'st'; icon = '🟢'; text = `Arrived at ${name}`; right = t; }
     } else if (vNow < 1.5) {
       cls = 'stop'; icon = '⏸'; text = `Stopped before ${toName}`; right = '';
     } else if (accel > 0.2) {
@@ -2158,6 +2251,16 @@
   }
   function onPosition(lat, lng, acc, speed, heading, rawAcc = acc) {
     const now = Date.now();
+    // on a tracked line: snap the position onto the track when the fix is close enough to it
+    if (S.tracking && S._poly) {
+      const sn = snapToPoly(lat, lng);
+      if (sn && sn.d <= (S._poly.bus ? 25 : Math.max(35, Math.min(rawAcc || 0, 80) * 1.2))) {
+        S._snap = { along: sn.along,
+          v: speed != null && speed > 0 ? speed : (S._snap ? S._snap.v : 0) };
+        lat = sn.lat; lng = sn.lng; acc = Math.min(acc, 25);
+      }
+      if (S._drOn) { S._drOn = false; status('GPS back.'); }
+    }
     S.lastFix = now; S.me = { lat, lng };
     if (S.tracking) S._fixes = (S._fixes || 0) + 1;
     updateHeading(lat, lng, heading, speed);
@@ -2207,7 +2310,8 @@
       renderUpcoming(P, E, now);
       scheduleBackupAlarm(S._eta.at - earlyLeadSecs() * 1000 + 20000);
       $('togo').textContent = P.togo === 0 ? '🎯' : P.togo + 1;
-      $('nextLbl').textContent = P.togo === 0 ? 'Next stop is yours' : `Next stop · ${P.togo + 1} stops to go`;
+      const stn = S._stn || {}, atName = stn.state === 'dwell' && S._route.list[stn.i] && stn.i !== S.dest.idx ? S._route.list[stn.i].name : null;
+      $('nextLbl').textContent = (atName ? `At ${atName} · ` : '') + (P.togo === 0 ? 'Next stop is yours' : `Next stop · ${P.togo + 1} stops to go`);
       $('nextName').textContent = P.nextName;
     } else if (P && P.off) {
       $('togo').textContent = '–'; $('nextLbl').textContent = 'Not on this route yet';
@@ -2266,6 +2370,8 @@
       _fixes: 0, _startedAt: Date.now(), lastFix: 0, _distArmed: false, _warnArmed: false, _railTrip: null, _upAt: 0,
       _travelled: 0, _lastGoodPt: null, _firstPt: null, _good: 0, _tripId: null, _tripDone: false });
     resetGpsFilter();
+    S._snap = null; S._drOn = false;
+    clearInterval(drTimer); drTimer = setInterval(deadReckon, 1000);
     tripStart();
     $('motion').classList.remove('on');
     loadLearned();
@@ -2273,6 +2379,8 @@
     clearInterval(etaTicker); etaTicker = setInterval(renderEta, 1000);
     track('trip-' + (S.dest.kind || 'pin'));
     S._route = routeStops();
+    buildRoutePoly();
+    if (isIOS && AlarmVibe && AlarmVibe.alarmAuth) AlarmVibe.alarmAuth().then(r => { S._alarmKit = !!(r && r.authorized); }).catch(() => {});
     document.body.classList.add('tracking');
     $('start').style.display = 'none'; $('stop').style.display = ''; $('share').style.display = '';
     addRecent(S.plan ? S.plan.finalDest : S.dest); $('live').style.display = 'block'; $('opts').style.display = 'none'; $('change').style.display = 'none';
@@ -2286,7 +2394,7 @@
       try {
         S.watchId = await BgGeo.addWatcher({
           backgroundTitle: 'Metro Alert is tracking', backgroundMessage: `Alarm set for ${S.dest.name}`,
-          requestPermissions: true, stale: false, distanceFilter: 10
+          requestPermissions: true, stale: false, distanceFilter: 0
         }, (loc, err) => {
           if (err) {
             if (err.code === 'NOT_AUTHORIZED') { status('Location permission needed. Opening settings…', true); BgGeo.openSettings().catch(() => {}); }
@@ -2310,6 +2418,7 @@
     }, 10000);
   }
   async function stopTracking(msg) {
+    clearInterval(drTimer); S._poly = null; S._snap = null;
     if (S.tracking && !S._tripDone) tripEnd('stopped');
     S.tracking = false;
     $('upcoming').classList.remove('on');
@@ -2536,7 +2645,35 @@
   applyTheme();
 
   // ================= Settings =================
+  // what the phone allows, so the alarm rings like a real alarm when the screen is off
+  async function renderReliability() {
+    const box = $('relList'); if (!box) return;
+    const row = (ok, title, note, fix) => `<div class="r"><b>${ok ? '✅' : '⚠️'}</b><span>${title}<small>${note}</small></span>${ok || !fix ? '' : `<button data-fix="${fix}">Allow</button>`}</div>`;
+    if (isAndroid && AlarmVibe && AlarmVibe.checkAlarm) {
+      let c; try { c = await AlarmVibe.checkAlarm(); } catch { c = null; }
+      if (!c) { box.innerHTML = '<p class="fine">Update the app (Settings → Check for updates) to get the full-screen alarm.</p>'; return; }
+      box.innerHTML = row(c.notifications, 'Notifications', 'Needed for the alarm screen.', 'notifications')
+        + row(c.fullScreen, 'Full-screen alarm', 'Shows the alarm over the lock screen and turns the screen on.', 'fullScreen')
+        + row(c.exactAlarm, 'Alarms & reminders', 'Lets the timetable backup alarm ring on time.', 'exactAlarm')
+        + row(c.battery, 'No battery limits', 'Stops Android from pausing tracking on the train.', 'battery');
+      box.querySelectorAll('[data-fix]').forEach(b => b.onclick = () => AlarmVibe.openAlarmSetting({ which: b.dataset.fix }).then(() => setTimeout(renderReliability, 1500)));
+    } else if (isIOS && AlarmVibe && AlarmVibe.alarmAuth) {
+      let r; try { r = await AlarmVibe.alarmAuth(); } catch { r = null; }
+      if (r && r.supported) box.innerHTML = row(r.authorized, 'Alarms (iOS 26)', r.authorized ? 'Your stop rings like a Clock alarm, also on silent.' : 'Allow alarms for Metro Alert in Settings → Apps → Metro Alert.', null);
+      else box.innerHTML = row(false, 'Notifications only', 'iPhone before iOS 26 can only show repeating notifications when the app is closed. Keep Metro Alert open on screen for the full alarm, or update to iOS 26.', null);
+    } else box.innerHTML = '<p class="fine">In a browser the alarm can only ring while this page is open. Install the app for a real alarm with the screen off.</p>';
+  }
+  $('lockTest').onclick = () => {
+    unlockAudio(); setupNotifications();
+    const at = Date.now() + 10000; S._testUntil = at + 5 * 60000;
+    const title = '⏰ Test alarm', body = 'This is how Metro Alert wakes you up.';
+    if (isAndroid && AlarmVibe) AlarmVibe.schedule({ at, title, body, tune: S.tune, sound: S.alertMode === 'sound' }).catch(() => {});
+    else if (isIOS && AlarmVibe && AlarmVibe.alarmSchedule) AlarmVibe.alarmSchedule({ at, title: 'Test alarm' }).then(r => { if (!r || !r.scheduled) setTimeout(() => fireAlarm('Test alarm', body), 10000); }).catch(() => {});
+    else setTimeout(() => fireAlarm('Test alarm', body), 10000);
+    toast('Alarm in 10 seconds. Lock your phone now.');
+  };
   function renderSettings() {
+    renderReliability();
     document.querySelectorAll('#setAlert button').forEach(b => b.classList.toggle('on', b.dataset.m === S.alertMode));
     document.querySelectorAll('#setEarly button').forEach(b => b.classList.toggle('on', +b.dataset.k === S.earlyK));
     document.querySelectorAll('#setOrient button').forEach(b => b.classList.toggle('on', b.dataset.o === S.orient));

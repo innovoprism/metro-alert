@@ -38,7 +38,8 @@ public class AlarmReceiver extends BroadcastReceiver {
             lastDismissed = System.currentTimeMillis();
             AlarmVibePlugin.stopFromOutside();
         } else if (ACTION_RING.equals(i.getAction())) {
-            ring(ctx, i.getStringExtra("title"), i.getStringExtra("body"), i.getStringExtra("tune"), i.getBooleanExtra("sound", true));
+            // fired by AlarmManager.setAlarmClock: Android allows starting the ringing service from here
+            startService(ctx, i.getStringExtra("title"), i.getStringExtra("body"), i.getStringExtra("tune"), i.getBooleanExtra("sound", true), true);
         }
     }
 
@@ -68,7 +69,27 @@ public class AlarmReceiver extends BroadcastReceiver {
         return id;
     }
 
+    /** Ring now: the foreground alarm service (loops sound + vibration, screen on, alarm screen). */
     public static void ring(Context ctx, String title, String body, String tune, boolean sound) {
+        startService(ctx, title, body, tune, sound, false);
+    }
+
+    static void startService(Context ctx, String title, String body, String tune, boolean sound, boolean fromAlarm) {
+        Intent s = new Intent(ctx, AlarmService.class).setAction(AlarmService.ACTION_START)
+                .putExtra("title", title).putExtra("body", body).putExtra("tune", tune).putExtra("sound", sound);
+        try {
+            if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(s); else ctx.startService(s);
+            ringing = true;
+            lastRung = System.currentTimeMillis();
+        } catch (Exception e) {
+            // Android 12+ blocks starting it from the background; an alarm-clock alarm 0.3 s from now is allowed to
+            if (!fromAlarm && scheduleAt(ctx, System.currentTimeMillis() + 300, title, body, tune, sound, 44)) return;
+            ringNotificationOnly(ctx, title, body, tune, sound);
+        }
+    }
+
+    /** Fallback: the repeating ("insistent") alarm notification. */
+    static void ringNotificationOnly(Context ctx, String title, String body, String tune, boolean sound) {
         if (tune == null || tune.isEmpty()) tune = "classic";
         Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
         if (open == null) open = new Intent();
@@ -102,28 +123,41 @@ public class AlarmReceiver extends BroadcastReceiver {
     }
 
     public static void stopRing(Context ctx) {
+        try { ctx.stopService(new Intent(ctx, AlarmService.class)); } catch (Exception ignored) { }
+        AlarmService.ringing = false;
+        try { ((AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE)).cancel(schedulePi(ctx, null, 44)); } catch (Exception ignored) { }
         try { ((NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE)).cancel(NOTIF_ID); } catch (Exception ignored) { }
         ringing = false;
     }
 
-    private static PendingIntent schedulePi(Context ctx, Intent extras) {
+    private static PendingIntent schedulePi(Context ctx, Intent extras) { return schedulePi(ctx, extras, 43); }
+    private static PendingIntent schedulePi(Context ctx, Intent extras, int code) {
         Intent i = new Intent(ctx, AlarmReceiver.class).setAction(ACTION_RING);
         if (extras != null) i.putExtras(extras);
         int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
-        return PendingIntent.getBroadcast(ctx, 43, i, fl);
+        return PendingIntent.getBroadcast(ctx, code, i, fl);
     }
 
     public static void schedule(Context ctx, long at, String title, String body, String tune, boolean sound) {
+        scheduleAt(ctx, at, title, body, tune, sound, 43);
+    }
+
+    /** setAlarmClock: Android's real alarm-clock alarm (exact, works in Doze, shows the alarm icon). */
+    static boolean scheduleAt(Context ctx, long at, String title, String body, String tune, boolean sound, int code) {
         Intent ex = new Intent();
         ex.putExtra("title", title); ex.putExtra("body", body); ex.putExtra("tune", tune); ex.putExtra("sound", sound);
-        PendingIntent pi = schedulePi(ctx, ex);
+        PendingIntent pi = schedulePi(ctx, ex, code);
         AlarmManager am = (AlarmManager) ctx.getSystemService(Context.ALARM_SERVICE);
         try {
-            if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
-            else if (Build.VERSION.SDK_INT >= 23) am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
-            else am.setExact(AlarmManager.RTC_WAKEUP, at, pi);
-        } catch (SecurityException e) {
-            am.set(AlarmManager.RTC_WAKEUP, at, pi);
+            if (Build.VERSION.SDK_INT >= 31 && !am.canScheduleExactAlarms()) { am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi); return false; }
+            Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+            int fl = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0);
+            PendingIntent show = PendingIntent.getActivity(ctx, 45, open != null ? open : new Intent(), fl);
+            am.setAlarmClock(new AlarmManager.AlarmClockInfo(at, show), pi);
+            return true;
+        } catch (Exception e) {
+            try { am.set(AlarmManager.RTC_WAKEUP, at, pi); } catch (Exception ignored) { }
+            return false;
         }
     }
 

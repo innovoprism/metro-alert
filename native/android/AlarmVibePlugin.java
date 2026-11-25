@@ -72,10 +72,45 @@ public class AlarmVibePlugin extends Plugin {
         call.resolve();
     }
 
+    /** What the phone allows for a real alarm (Settings → "Alarm reliability"). */
+    @PluginMethod
+    public void checkAlarm(PluginCall call) {
+        Context c = getContext();
+        com.getcapacitor.JSObject r = new com.getcapacitor.JSObject();
+        boolean fsi = true, exact = true, battery = true, notif = true;
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (Build.VERSION.SDK_INT >= 34) fsi = nm.canUseFullScreenIntent();
+            if (Build.VERSION.SDK_INT >= 24) notif = nm.areNotificationsEnabled();
+            if (Build.VERSION.SDK_INT >= 31) exact = ((android.app.AlarmManager) c.getSystemService(Context.ALARM_SERVICE)).canScheduleExactAlarms();
+            if (Build.VERSION.SDK_INT >= 23) battery = ((PowerManager) c.getSystemService(Context.POWER_SERVICE)).isIgnoringBatteryOptimizations(c.getPackageName());
+        } catch (Exception ignored) { }
+        r.put("fullScreen", fsi); r.put("exactAlarm", exact); r.put("battery", battery); r.put("notifications", notif);
+        call.resolve(r);
+    }
+
+    @PluginMethod
+    public void openAlarmSetting(PluginCall call) {
+        String which = call.getString("which", "app");
+        Context c = getContext();
+        Uri pkg = Uri.parse("package:" + c.getPackageName());
+        android.content.Intent i;
+        if ("fullScreen".equals(which) && Build.VERSION.SDK_INT >= 34) i = new android.content.Intent("android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT", pkg);
+        else if ("exactAlarm".equals(which) && Build.VERSION.SDK_INT >= 31) i = new android.content.Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkg);
+        else if ("battery".equals(which) && Build.VERSION.SDK_INT >= 23) i = new android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg);
+        else if ("notifications".equals(which) && Build.VERSION.SDK_INT >= 26) i = new android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, c.getPackageName());
+        else i = new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg);
+        i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        try { c.startActivity(i); } catch (Exception e) {
+            try { c.startActivity(new android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception ignored) { }
+        }
+        call.resolve();
+    }
+
     @PluginMethod
     public void status(PluginCall call) {
         com.getcapacitor.JSObject r = new com.getcapacitor.JSObject();
-        r.put("ringing", AlarmReceiver.ringing);
+        r.put("ringing", AlarmReceiver.ringing || AlarmService.ringing);
         r.put("lastDismissed", AlarmReceiver.lastDismissed);
         r.put("lastRung", AlarmReceiver.lastRung);
         call.resolve(r);

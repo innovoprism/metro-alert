@@ -16,12 +16,16 @@ if (target === 'android') {
     'android.permission.VIBRATE',
     'android.permission.WAKE_LOCK',
     'android.permission.USE_FULL_SCREEN_INTENT',
-    'android.permission.SCHEDULE_EXACT_ALARM'
+    'android.permission.SCHEDULE_EXACT_ALARM',
+    'android.permission.USE_EXACT_ALARM',
+    'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
+    'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'
   ];
   for (const p of perms) {
     if (!x.includes(`"${p}"`)) x = x.replace('</manifest>', `    <uses-permission android:name="${p}" />\n</manifest>`);
   }
   if (!x.includes('.AlarmReceiver')) x = x.replace('</application>', '        <receiver android:name=".AlarmReceiver" android:exported="false" />\n    </application>');
+  if (!x.includes('.AlarmService')) x = x.replace('</application>', '        <service android:name=".AlarmService" android:exported="false" android:foregroundServiceType="mediaPlayback" />\n    </application>');
   fs.writeFileSync(f, x);
   console.log('Patched AndroidManifest.xml');
 
@@ -80,6 +84,7 @@ public class MainActivity extends BridgeActivity {
   add('NSLocationWhenInUseUsageDescription', msg);
   add('NSLocationAlwaysAndWhenInUseUsageDescription', msg);
   add('NSLocationAlwaysUsageDescription', msg);
+  add('NSAlarmKitUsageDescription', '<string>Metro Alert sets an alarm for your stop so it rings like a clock alarm, even on silent or when the app is closed.</string>');
   add('UIBackgroundModes', '<array>\n\t\t<string>location</string>\n\t\t<string>audio</string>\n\t</array>');
   fs.writeFileSync(f, x);
   console.log('Patched Info.plist');

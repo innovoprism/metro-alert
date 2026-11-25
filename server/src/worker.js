@@ -37,6 +37,8 @@ const json = (data, status = 200, extra = {}) =>
 const dubaiDay = (offsetDays = 0) => new Date(Date.now() + 4 * 3600e3 - offsetDays * 86400e3).toISOString().slice(0, 10);
 const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : '');
 
+import { LANDING } from './landing.js';
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -58,7 +60,15 @@ export default {
       if (p === '/api/version') return await version(env, ctx);
       if (p === '/api/stats') return authorised(url, env) ? json(await stats(env)) : json({ error: 'key required' }, 401);
       if (p === '/stats') return authorised(url, env) ? html(dashboard(await stats(env))) : html(loginPage(), 401);
+      if (p === '/api/public') return await publicStats(env, ctx);
       if (p.startsWith('/api/')) return json({ error: 'not found' }, 404);
+      // landing page at "/", the web app at /app/ (its files are also still served at the old root paths)
+      if (p === '/' && req.method === 'GET') return html(LANDING);
+      if (p === '/app') return Response.redirect(url.origin + '/app/', 301);
+      if (p.startsWith('/app/')) {
+        const u = new URL(req.url); u.pathname = p.slice(4) || '/';
+        return env.ASSETS.fetch(new Request(u.toString(), req));
+      }
     } catch (e) {
       return json({ error: String(e && e.message || e) }, 400);
     }
@@ -382,6 +392,20 @@ async function departures(url, env) {
   }
   for (const k in out) out[k].sort((a, b) => (a.next.length ? a.next[0] : 1e9) - (b.next.length ? b.next[0] : 1e9));
   return json({ now: nowMin, day: dt, source: 'RTA timetable', stops: out }, 200, { 'Cache-Control': 'public, max-age=60' });
+}
+
+// public numbers for the landing page (cached 10 min)
+async function publicStats(env, ctx) {
+  const cache = caches.default, key = new Request('https://cache.local/api/public');
+  const hit = await cache.match(key); if (hit) return hit;
+  const [u, t, g] = await Promise.all([
+    env.DB.prepare('SELECT COUNT(*) n FROM installs').first(),
+    env.DB.prepare("SELECT COUNT(*) n FROM trips WHERE status = 'arrived' AND coins > 0").first(),
+    env.DB.prepare('SELECT COUNT(*) n FROM seg WHERE n >= 3').first(),
+  ]);
+  const res = json({ users: u.n, trips: t.n, segments: g.n }, 200, { 'Cache-Control': 'public, max-age=600' });
+  ctx.waitUntil(cache.put(key, res.clone()));
+  return res;
 }
 
 // ---------------------------------------------------------------- latest version
